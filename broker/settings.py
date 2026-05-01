@@ -88,6 +88,8 @@ class Settings:
 
     # ----- Saviynt object names this demo expects ----------------------------
     app_name: str
+    security_system: str
+    entitlement_type: str
     ent_deploy_dev: str
     ent_deploy_prod: str
     pam_endpoint_aws: str
@@ -138,13 +140,15 @@ def load_settings() -> Settings:
         path_llt=_env("PATH_LLT", "/ECM/oauth/access_token_withissuer"),
         path_checkout=_env("PATH_CHECKOUT", "/ECMv6/api/pam/account/checkout"),
         path_checkin=_env("PATH_CHECKIN", "/ECMv6/api/pam/account/checkin"),
-        path_create_request=_env("PATH_CREATE_REQUEST", "/ECM/api/v5/createUserAccessRequest"),
+        path_create_request=_env("PATH_CREATE_REQUEST", "/ECM/api/v5/createrequest"),
         path_request_status=_env("PATH_REQUEST_STATUS", "/ECMv6/api/v5/fetchRequestStatus"),
         path_create_account=_env("PATH_CREATE_ACCOUNT", "/ECM/api/v5/createAccount"),
         path_update_account=_env("PATH_UPDATE_ACCOUNT", "/ECM/api/v5/updateAccount"),
 
         # Saviynt object names ----------------------------------------------
         app_name=_env("APP_NAME", "Pulumi-Pipeline-AWS"),
+        security_system=_env("SECURITY_SYSTEM", _env("APP_NAME", "Pulumi-Pipeline-AWS")),
+        entitlement_type=_env("ENTITLEMENT_TYPE", "Entitlement"),
         ent_deploy_dev=_env("ENT_DEPLOY_DEV", "Deploy-EC2-Dev"),
         ent_deploy_prod=_env("ENT_DEPLOY_PROD", "Deploy-EC2-Prod"),
         pam_endpoint_aws=_env("PAM_ENDPOINT_AWS", "AWS-IAM-Endpoint"),

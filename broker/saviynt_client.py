@@ -357,24 +357,57 @@ class SaviyntClient:
         entitlement_name: str,
         justification: str,
     ) -> str:
-        """Open an access request. Returns the request_id."""
+        """
+        Open an entitlement-add request via /ECM/api/v5/createrequest
+        (Saviynt EIC v5, Amsterdam GA).
+
+        Body shape per the API reference:
+          requesttype = "ADD"
+          username    = the user the entitlement should be granted to
+          endpoint    = application/endpoint name
+          securitysystem = top-level security system (often == endpoint name)
+          entitlement = [{entitlementtype, entitlementvalue, businessjustification}]
+          checksod    = "true" so the demo SoD story holds up
+
+        Response provides RequestId (human-readable) and requestkey
+        (internal). We hand back RequestId for use in fetchRequestStatus
+        polling.
+        """
         self._ensure_logged_in()
+        s = self._settings
         payload = {
+            "requesttype": "ADD",
             "username": username,
-            "endpoint": self._settings.app_name,
-            "entitlementType": "Entitlement",
-            "entitlementName": entitlement_name,
-            "businessJustification": justification,
+            "endpoint": s.app_name,
+            "securitysystem": s.security_system,
+            "comments": justification,
+            "checksod": "true",
+            "entitlement": [
+                {
+                    "entitlementtype": s.entitlement_type,
+                    "entitlementvalue": entitlement_name,
+                    "businessjustification": justification,
+                }
+            ],
         }
-        resp = self._post_json(self._settings.path_create_request, payload)
+        resp = self._post_json(s.path_create_request, payload)
+
+        # errorCode "0" is documented success; anything else surfaces the body.
+        error_code = str(resp.get("errorCode", "")).strip()
+        if error_code and error_code != "0":
+            raise SaviyntError(
+                f"createrequest returned errorCode={error_code}", body=resp
+            )
+
         request_id = (
-            resp.get("requestid")
+            resp.get("RequestId")
+            or resp.get("requestid")
             or resp.get("requestId")
-            or resp.get("requestKey")
-            or (resp.get("result") or {}).get("requestid")
+            or resp.get("requestkey")
+            or (resp.get("result") or {}).get("RequestId")
         )
         if not request_id:
-            raise SaviyntError("Saviynt createRequest did not return a request_id", body=resp)
+            raise SaviyntError("createrequest did not return a RequestId", body=resp)
         return str(request_id)
 
     def fetch_request_status(self, request_id: str) -> str:

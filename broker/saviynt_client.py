@@ -299,16 +299,53 @@ class SaviyntClient:
         return head.startswith("<!doctype html") or head.startswith("<html")
 
     def _user_has_entitlement_fallback(self, username: str, entitlement_name: str) -> bool:
-        resp = self._post_json(
-            self._settings.path_get_user,
-            {"username": username, "filtercriteria": {"username": username}},
-        )
-        users = resp.get("userdetails") or resp.get("users") or resp.get("value") or []
-        if not users and isinstance(resp, list):
-            users = resp
+        """
+        Resolve user entitlements via the configured getUser path.
+
+        Saviynt tenants vary on what payload shape getUser accepts. We try
+        the common shapes in order, accepting whichever the tenant validates.
+        """
+        candidate_payloads = [
+            {"username": username},
+            {"username": username, "max": 1, "offset": 0},
+            {"filtercriteria": {"username": username}},
+            {"filtercriteria": {"username": username}, "max": 1, "offset": 0},
+        ]
+        last_error: SaviyntError | None = None
+        for payload in candidate_payloads:
+            try:
+                resp = self._post_json(self._settings.path_get_user, payload)
+            except SaviyntError as e:
+                # 400 / 412 are "wrong payload shape" — try the next one.
+                # 403/404/405 mean the path itself is wrong on this tenant —
+                # bubble up so the operator sees the real problem.
+                if e.status in (400, 412):
+                    last_error = e
+                    continue
+                raise
+            return self._scan_user_response_for_entitlement(resp, entitlement_name)
+
+        # Exhausted every shape without one validating
+        raise last_error or SaviyntError("getUser fallback returned no usable response")
+
+    @staticmethod
+    def _scan_user_response_for_entitlement(resp: Any, entitlement_name: str) -> bool:
+        if isinstance(resp, list):
+            users: list[dict[str, Any]] = resp
+        else:
+            users = (
+                resp.get("userdetails")
+                or resp.get("Userdetails")
+                or resp.get("users")
+                or resp.get("Users")
+                or resp.get("value")
+                or []
+            )
+            if isinstance(users, dict):
+                users = [users]
         for user in users:
             for ent in user.get("entitlements", []) or []:
-                name = ent.get("entitlement_value") or ent.get("name")
+                name = ent.get("entitlement_value") or ent.get("name") or ent.get("entitlementValue")
                 if name == entitlement_name:
                     return True
         return False

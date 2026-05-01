@@ -300,33 +300,27 @@ class SaviyntClient:
 
     def _user_has_entitlement_fallback(self, username: str, entitlement_name: str) -> bool:
         """
-        Resolve user entitlements via the configured getUser path.
+        Resolve user entitlements via getUser using the documented Saviynt
+        EIC v5 API shape.
 
-        Saviynt tenants vary on what payload shape getUser accepts. We try
-        the common shapes in order, accepting whichever the tenant validates.
+        Per Saviynt's API reference (Amsterdam GA), the canonical body uses
+        `filtercriteria` for exact-match lookup and `responsefields` to opt
+        into attributes that are otherwise omitted when blank. Without the
+        explicit `entitlements` responsefield, getUser defaults to returning
+        only nonblank required attrs (username/email/statuskey/firstname/
+        lastname/employeeid).
+
+        Response wraps records in `userlist`. We tolerate other shapes
+        (older releases, wrappers) for portability.
         """
-        candidate_payloads = [
-            {"username": username},
-            {"username": username, "max": 1, "offset": 0},
-            {"filtercriteria": {"username": username}},
-            {"filtercriteria": {"username": username}, "max": 1, "offset": 0},
-        ]
-        last_error: SaviyntError | None = None
-        for payload in candidate_payloads:
-            try:
-                resp = self._post_json(self._settings.path_get_user, payload)
-            except SaviyntError as e:
-                # 400 / 412 are "wrong payload shape" — try the next one.
-                # 403/404/405 mean the path itself is wrong on this tenant —
-                # bubble up so the operator sees the real problem.
-                if e.status in (400, 412):
-                    last_error = e
-                    continue
-                raise
-            return self._scan_user_response_for_entitlement(resp, entitlement_name)
-
-        # Exhausted every shape without one validating
-        raise last_error or SaviyntError("getUser fallback returned no usable response")
+        payload = {
+            "filtercriteria": {"username": username},
+            "responsefields": ["username", "entitlements"],
+            "max": 1,
+            "offset": 0,
+        }
+        resp = self._post_json(self._settings.path_get_user, payload)
+        return self._scan_user_response_for_entitlement(resp, entitlement_name)
 
     @staticmethod
     def _scan_user_response_for_entitlement(resp: Any, entitlement_name: str) -> bool:
@@ -334,7 +328,9 @@ class SaviyntClient:
             users: list[dict[str, Any]] = resp
         else:
             users = (
-                resp.get("userdetails")
+                resp.get("userlist")        # documented Saviynt v5 response key
+                or resp.get("Userlist")
+                or resp.get("userdetails")
                 or resp.get("Userdetails")
                 or resp.get("users")
                 or resp.get("Users")
@@ -345,7 +341,11 @@ class SaviyntClient:
                 users = [users]
         for user in users:
             for ent in user.get("entitlements", []) or []:
-                name = ent.get("entitlement_value") or ent.get("name") or ent.get("entitlementValue")
+                name = (
+                    ent.get("entitlement_value")
+                    or ent.get("entitlementValue")
+                    or ent.get("name")
+                )
                 if name == entitlement_name:
                     return True
         return False

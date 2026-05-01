@@ -9,7 +9,7 @@
 | # | Test | Goal | Status |
 |---|------|------|--------|
 | 1 | Broker auth + Saviynt login | Broker boots, HMAC works, SA can log in | **PASSED** (2026-05-01) |
-| 2 | Entitlement check (dev path) | `/preflight dev` returns `ok` for an entitled user | In progress |
+| 2 | Entitlement check (dev path) | `/preflight dev` returns `ok` for an entitled user | **PLUMBING GREEN** (2026-05-01); awaiting Phase 4 demo objects |
 | 3 | AWS PAM checkout | `/checkout-aws` returns valid AWS creds | Pending Test 2 |
 | 4 | NHI registration | `/register-nhi` creates an EC2 NHI account | Pending Test 3 |
 | 5 | Approval flow (prod path) | `/preflight prod` opens a request; approval resumes | Pending Test 4 |
@@ -270,12 +270,44 @@ Once green, fill in:
 - Login response: [x] `access_token` present  [x] `refresh_token` present
 - `/preflight dev` response: 502 `saviynt_error` mentioning `/ECM/api/v5/checkUserAccess` — entitlement-check path needs override (handed off to Test 2)
 
+### Recorded results (Test 2 plumbing)
+
+- `getUser` fallback validates against `/ECM/api/v5/getUser` with the
+  documented body (`filtercriteria.username` + `responsefields:["username","entitlements"]`).
+  igaadmin doesn't hold `Deploy-EC2-Dev` (expected — that entitlement
+  doesn't exist in the tenant yet).
+- `createrequest` validates against `/ECM/api/v5/createrequest` (lowercase)
+  with the documented body. Saviynt returns errorCode=1 message="System
+  Pulumi-Pipeline-AWS Not Found" — the broker has reached the request
+  engine and Saviynt's business logic is rejecting it because the demo's
+  security system / endpoint / entitlement objects haven't been created
+  yet (Phase 4 work).
+
+Test 2 is **plumbing-green**: the full request flow path through the
+broker is wired correctly. To turn it 200-green we either build the
+demo objects in Phase 4 or temporarily test against a real existing
+entitlement+endpoint pair on the tenant.
+
 ### Notes / corrections
 
 - `/ECM/api/v5/checkUserAccess` returns HTTP 403 with a Tomcat default HTML
   page on this tenant — the path almost certainly doesn't exist. Broker's
   fallback (`getUser`-and-scan) was only triggering on 404; widened to
-  cover 403/405/HTML responses in commit `<TBD>`.
+  cover 403/405/HTML responses.
+- `getUser` body is `filtercriteria.username` (not bare `username`) and
+  the response wraps records in `userlist`. Documented in Saviynt EIC v5
+  Amsterdam GA reference. Code uses that shape directly now; multi-shape
+  probe was overengineering.
+- `createrequest` is **lowercase** on this tenant (`/ECM/api/v5/createrequest`,
+  not `createRequest`/`createUserAccessRequest`). Body uses `requesttype:"ADD"`,
+  `endpoint`, `securitysystem` (separate field, often same value as endpoint),
+  `comments`, `entitlement[]` array, `checksod:"true"`. Response gives
+  `RequestId` (humanreadable) and `requestkey` (internal) plus `errorCode`.
+- `.env`-vs-code-default trap: an existing `broker/.env` keeps overriding
+  newer code defaults until you remove the stale line. If a path or value
+  needs to change in code, also update or comment out the matching `.env`
+  line. Defensive move once and done: `sed -i 's|^PATH_|#PATH_|' broker/.env`
+  to comment out every `PATH_*` line so code defaults always win.
 - `.env.example` ships canonical `SAVIYNT_*` lines commented out so the
   exported `SavURL`/`SavAPIUser`/`SavAPIPass` aren't shadowed by placeholder
   values. If you re-clone, this is now the default — no manual sed needed.

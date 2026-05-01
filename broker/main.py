@@ -58,11 +58,19 @@ def _safe_account_name(prefix: str, instance_id: str, env: str) -> str:
 @app.exception_handler(SaviyntError)
 async def saviynt_error_handler(_request, exc: SaviyntError) -> JSONResponse:  # type: ignore[no-untyped-def]
     log.error("SaviyntError: %s (status=%s body=%s)", exc, exc.status, exc.body)
+    # Surface Saviynt's own message field in the detail when present, so the
+    # caller (operator running curl, or GitHub Actions) sees the real reason
+    # without having to read the broker log.
+    detail = str(exc)
+    if isinstance(exc.body, dict):
+        sav_msg = exc.body.get("message") or exc.body.get("errorMessage")
+        if sav_msg:
+            detail = f"{detail} — {str(sav_msg).strip()}"
     return JSONResponse(
         status_code=status.HTTP_502_BAD_GATEWAY,
         content=ErrorResponse(
             error="saviynt_error",
-            detail=str(exc),
+            detail=detail,
         ).model_dump(),
     )
 

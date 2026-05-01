@@ -205,23 +205,15 @@ fix before Step 7.
 Still in terminal B:
 
 ```bash
-TS=$(date +%s)
-NONCE=$(head -c 16 /dev/urandom | xxd -p)
-BODY='{"requesting_user":"someone","target_env":"dev","justification":"smoke"}'
-SIG=$(printf '%s' "${TS}.${NONCE}.${BODY}" \
-  | openssl dgst -sha256 -hmac "$BROKER_HMAC_SECRET" \
-  | sed 's/^.* //')
-
-curl -sS -w '\nHTTP %{http_code}\n' -X POST "$BROKER_URL/preflight" \
-  -H 'Content-Type: application/json' \
-  -H "X-Broker-Timestamp: $TS" \
-  -H "X-Broker-Nonce: $NONCE" \
-  -H "X-Broker-Signature: $SIG" \
-  -d "$BODY"
+bash scripts/preflight.sh someone dev
 ```
 
-Capture the response body and the HTTP status. Match it against the table
-in **Expected results** below.
+Defaults to `requesting_user=someone`, `target_env=dev`. Pass a different
+user or env as positional args (e.g. `bash scripts/preflight.sh wes-dev prod`).
+Override the justification text with the `PREFLIGHT_JUSTIFICATION` env var.
+
+Capture the response body and the HTTP status the script prints. Match it
+against the table in **Expected results** below.
 
 #### Step 8 — Stop the broker and clean up
 

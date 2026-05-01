@@ -81,6 +81,24 @@ All three should print non-empty. If any are blank, source whatever file
 exports them (`~/.bashrc`, `~/.profile`, a systemd service env file) before
 continuing.
 
+**Subprocess inheritance gotcha**: if `echo` prints values but Python launched
+from this shell doesn't see them, the variables exist as shell vars but
+weren't *exported* to subprocesses. Verify with:
+
+```bash
+.venv/bin/python -c "import os; print({k: os.environ.get(k) for k in ['SavURL','SavAPIUser','SavAPIPass']})"
+```
+
+If that prints `None` for any of them — common when the variables come from
+`/etc/environment` and PAM didn't propagate them to your interactive shell —
+add this line to `~/.bashrc` so any future shell auto-exports them:
+
+```bash
+set -a; . /etc/environment; set +a
+```
+
+Then `source ~/.bashrc` (or open a new shell) and re-verify.
+
 #### Step 2 — Pull the repo (SSH)
 
 The Ubuntu broker host already has an SSH key registered with this GitHub

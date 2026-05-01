@@ -1,21 +1,26 @@
 """
 Saviynt EIC API client.
 
-Wraps the Saviynt REST flows the broker needs:
+Wraps the Saviynt REST flows the broker needs. Amsterdam GA contracts are
+verified in saviynt-config/01-application-onboarding.md,
+saviynt-config/02-entitlements.md, and saviynt-config/03-roles-and-users.md.
+
+Flows:
   - login (returns access_token + refresh_token)
-  - getAccount  -> accountkey resolution
+  - get_account -> accountkey resolution (PAM checkout setup)
   - generate_llt -> long-lasting token for PAM checkout
   - checkout -> retrieves a PAM-vaulted credential (poll on TASK_NOT_FOUND)
   - checkin -> returns credential, triggers rotation
-  - check_user_entitlement -> "does user X already have entitlement Y?"
-  - create_request -> opens an access request when they don't
-  - fetch_request_status -> polls approval state
-  - create_account -> registers a new NHI in Saviynt PAM
-  - update_account -> attaches the credential payload to a fresh NHI
+  - user_has_entitlement -> getEntDetailsforUsers (GET with JSON body);
+      true iff errorCode=="0" and accessDetails non-empty
+  - create_access_request -> createrequest (POST); entitlement is a string,
+      requestor is the broker SA, beneficiary is `username`
+  - fetch_request_status -> fetchRequestApprovalDetails (POST);
+      returns pending|approved|rejected|unknown
+  - create_nhi_account -> registers a new NHI in Saviynt PAM
 
-Implementation reuses the patterns proven in ValidatebySPN-clean.py
-(see project root). Auth state (access_token + refresh_token) is cached
-on the instance and refreshed on 401.
+Auth state (access_token + refresh_token) is cached on the instance and
+refreshed on 401.
 """
 
 from __future__ import annotations
@@ -239,116 +244,35 @@ class SaviyntClient:
         )
 
     # ------------------------------------------------------------------ entitlement
-    # Statuses that suggest the configured entitlement-check path is wrong /
-    # absent on this tenant — fall back to a getUser scan instead of failing.
-    _ENT_CHECK_FALLBACK_STATUSES = {403, 404, 405}
-
     def user_has_entitlement(self, username: str, entitlement_name: str) -> bool:
         """
-        Check whether a user already holds an entitlement.
+        True iff the user currently holds the entitlement on the configured
+        endpoint.
 
-        Tries the configured PATH_CHECK_ENTITLEMENT first. On any sign that
-        the path is missing on this tenant (403/404/405, or a non-JSON HTML
-        body), falls back to scanning getUser results.
+        Calls getEntDetailsforUsers (Amsterdam GA). The endpoint is HTTP GET
+        but accepts a JSON body — Saviynt convention. The response is a
+        flat `accessDetails[]` list; one or more matching records means the
+        user holds the entitlement.
+
+        Verified contract: saviynt-config/03-roles-and-users.md §C.5.
         """
         self._ensure_logged_in()
+        s = self._settings
         payload = {
             "username": username,
-            "entitlementname": entitlement_name,
-            "applicationname": self._settings.app_name,
+            "endpoint": s.app_name,
+            "entitlementType": s.entitlement_type,
+            "entitlement_value": entitlement_name,
         }
-        try:
-            resp = self._post_json(self._settings.path_check_entitlement, payload)
-        except SaviyntError as e:
-            if e.status in self._ENT_CHECK_FALLBACK_STATUSES or self._looks_like_html(e.body):
-                log.info(
-                    "Entitlement-check path %s returned status=%s; falling back to getUser scan",
-                    self._settings.path_check_entitlement,
-                    e.status,
-                )
-                return self._user_has_entitlement_fallback(username, entitlement_name)
-            raise
-
-        # If the response came back HTML-ish (200 but Tomcat default page),
-        # treat it the same as a missing endpoint.
-        if self._looks_like_html(resp):
-            log.info(
-                "Entitlement-check path %s returned non-JSON; falling back to getUser scan",
-                self._settings.path_check_entitlement,
-            )
-            return self._user_has_entitlement_fallback(username, entitlement_name)
-
-        # Common response shapes
-        for key in ("hasAccess", "hasaccess", "result"):
-            val = resp.get(key)
-            if isinstance(val, bool):
-                return val
-            if isinstance(val, str):
-                return val.strip().lower() in ("true", "yes", "1")
-        # If we got here without a definitive answer, treat as no.
-        return False
-
-    @staticmethod
-    def _looks_like_html(body: Any) -> bool:
-        if not isinstance(body, dict):
+        resp = self._request(
+            "GET",
+            s.path_get_ent_details_for_users,
+            json_body=payload,
+        )
+        if str(resp.get("errorCode", "")).strip() != "0":
             return False
-        raw = body.get("raw")
-        if not isinstance(raw, str):
-            return False
-        head = raw.lstrip().lower()[:200]
-        return head.startswith("<!doctype html") or head.startswith("<html")
-
-    def _user_has_entitlement_fallback(self, username: str, entitlement_name: str) -> bool:
-        """
-        Resolve user entitlements via getUser using the documented Saviynt
-        EIC v5 API shape.
-
-        Per Saviynt's API reference (Amsterdam GA), the canonical body uses
-        `filtercriteria` for exact-match lookup and `responsefields` to opt
-        into attributes that are otherwise omitted when blank. Without the
-        explicit `entitlements` responsefield, getUser defaults to returning
-        only nonblank required attrs (username/email/statuskey/firstname/
-        lastname/employeeid).
-
-        Response wraps records in `userlist`. We tolerate other shapes
-        (older releases, wrappers) for portability.
-        """
-        payload = {
-            "filtercriteria": {"username": username},
-            "responsefields": ["username", "entitlements"],
-            "max": 1,
-            "offset": 0,
-        }
-        resp = self._post_json(self._settings.path_get_user, payload)
-        return self._scan_user_response_for_entitlement(resp, entitlement_name)
-
-    @staticmethod
-    def _scan_user_response_for_entitlement(resp: Any, entitlement_name: str) -> bool:
-        if isinstance(resp, list):
-            users: list[dict[str, Any]] = resp
-        else:
-            users = (
-                resp.get("userlist")        # documented Saviynt v5 response key
-                or resp.get("Userlist")
-                or resp.get("userdetails")
-                or resp.get("Userdetails")
-                or resp.get("users")
-                or resp.get("Users")
-                or resp.get("value")
-                or []
-            )
-            if isinstance(users, dict):
-                users = [users]
-        for user in users:
-            for ent in user.get("entitlements", []) or []:
-                name = (
-                    ent.get("entitlement_value")
-                    or ent.get("entitlementValue")
-                    or ent.get("name")
-                )
-                if name == entitlement_name:
-                    return True
-        return False
+        details = resp.get("accessDetails") or []
+        return bool(details)
 
     # ------------------------------------------------------------------ access requests
     def create_access_request(
@@ -359,19 +283,20 @@ class SaviyntClient:
     ) -> str:
         """
         Open an entitlement-add request via /ECM/api/v5/createrequest
-        (Saviynt EIC v5, Amsterdam GA).
+        (Saviynt EIC Amsterdam GA).
 
-        Body shape per the API reference:
-          requesttype = "ADD"
-          username    = the user the entitlement should be granted to
-          endpoint    = application/endpoint name
-          securitysystem = top-level security system (often == endpoint name)
-          entitlement = [{entitlementtype, entitlementvalue, businessjustification}]
-          checksod    = "true" so the demo SoD story holds up
+        Verified payload shape (saviynt-config/02-entitlements.md §B.5):
+          requesttype:    "ADD"
+          username:       beneficiary (who's getting the entitlement)
+          endpoint:       application/endpoint name (= APP_NAME)
+          securitysystem: top-level security system (often == endpoint name)
+          entitlement:    plain string, NOT an array of objects
+          comments:       justification text
+          requestor:      submitter (the broker SA, e.g. igaadmin)
+          checksod:       "false" for v1; flip when an SoD ruleset is in place
 
-        Response provides RequestId (human-readable) and requestkey
-        (internal). We hand back RequestId for use in fetchRequestStatus
-        polling.
+        Response: {msg, requestkey, errorCode}. We return requestkey — that
+        same value is what fetchRequestApprovalDetails wants as `requestKey`.
         """
         self._ensure_logged_in()
         s = self._settings
@@ -380,19 +305,13 @@ class SaviyntClient:
             "username": username,
             "endpoint": s.app_name,
             "securitysystem": s.security_system,
+            "entitlement": entitlement_name,
             "comments": justification,
-            "checksod": "true",
-            "entitlement": [
-                {
-                    "entitlementtype": s.entitlement_type,
-                    "entitlementvalue": entitlement_name,
-                    "businessjustification": justification,
-                }
-            ],
+            "requestor": s.demo_requestor,
+            "checksod": "false",
         }
         resp = self._post_json(s.path_create_request, payload)
 
-        # errorCode "0" is documented success; anything else surfaces the body.
         error_code = str(resp.get("errorCode", "")).strip()
         if error_code and error_code != "0":
             raise SaviyntError(
@@ -400,37 +319,80 @@ class SaviyntClient:
             )
 
         request_id = (
-            resp.get("RequestId")
+            resp.get("requestkey")
             or resp.get("requestid")
+            or resp.get("RequestId")
             or resp.get("requestId")
-            or resp.get("requestkey")
-            or (resp.get("result") or {}).get("RequestId")
         )
         if not request_id:
-            raise SaviyntError("createrequest did not return a RequestId", body=resp)
+            raise SaviyntError("createrequest did not return a request key", body=resp)
         return str(request_id)
 
     def fetch_request_status(self, request_id: str) -> str:
-        """Returns one of: pending, approved, rejected, unknown."""
+        """
+        Poll a request's overall approval status. Returns one of:
+        pending, approved, rejected, unknown.
+
+        Calls fetchRequestApprovalDetails (Amsterdam GA, POST). The response
+        is nested:
+          ApprovalRequestDetails.AccessRequestDetails[].modifyTasks[].approvalstatus
+          ApprovalRequestDetails.AccessRequestDetails[].tasksList[].approvalstatus
+
+        Aggregation rule:
+          - any task REJECTED/DENIED  -> rejected
+          - all tasks APPROVED/COMPLETE -> approved
+          - otherwise (PENDING / "Task Created" / "Approval In Progress" / etc.)
+            -> pending
+
+        Verified contract: saviynt-config/02-entitlements.md §B.5
+        ("Verify request status").
+        """
         self._ensure_logged_in()
-        resp = self._get_json(
-            self._settings.path_request_status,
-            params={"requestid": request_id},
-        )
-        status = (
-            resp.get("status")
-            or resp.get("requestStatus")
-            or (resp.get("result") or {}).get("status")
-            or ""
-        )
-        normalized = str(status).strip().lower()
-        if normalized in ("approved", "completed", "complete"):
-            return "approved"
-        if normalized in ("rejected", "denied", "declined"):
+        s = self._settings
+        payload = {
+            "requestKey": str(request_id),
+            "userName": s.demo_approver,
+        }
+        resp = self._post_json(s.path_fetch_approval_details, payload)
+        statuses = self._extract_approval_statuses(resp)
+        if not statuses:
+            return "unknown"
+
+        upper = [val.upper() for val in statuses]
+        if any(u in ("REJECTED", "DENIED", "DECLINED") for u in upper):
             return "rejected"
-        if normalized in ("pending", "open", "in progress", "inprogress", "submitted"):
-            return "pending"
-        return "unknown"
+        if all(u in ("APPROVED", "COMPLETED", "COMPLETE") for u in upper):
+            return "approved"
+        return "pending"
+
+    @staticmethod
+    def _extract_approval_statuses(resp: Any) -> list[str]:
+        """Pull approvalstatus values from Amsterdam's nested response shape."""
+        out: list[str] = []
+        if not isinstance(resp, dict):
+            return out
+        ard = resp.get("ApprovalRequestDetails") or resp.get("approvalRequestDetails")
+        if not isinstance(ard, dict):
+            return out
+        ar = ard.get("AccessRequestDetails") or ard.get("accessRequestDetails") or []
+        if isinstance(ar, dict):
+            ar = [ar]
+        if not isinstance(ar, list):
+            return out
+        for entry in ar:
+            if not isinstance(entry, dict):
+                continue
+            for tasks_key in ("modifyTasks", "tasksList", "tasks"):
+                tasks = entry.get(tasks_key)
+                if not isinstance(tasks, list):
+                    continue
+                for task in tasks:
+                    if not isinstance(task, dict):
+                        continue
+                    status = task.get("approvalstatus") or task.get("approvalStatus")
+                    if status:
+                        out.append(str(status))
+        return out
 
     # ------------------------------------------------------------------ PAM checkout/in
     def generate_llt(self, account_key: int) -> str:

@@ -74,15 +74,15 @@ class Settings:
     saviynt_verify_tls: bool
 
     # ----- Saviynt API endpoint paths (configurable) -------------------------
+    # Verified against Amsterdam GA in saviynt-config/01-03.
     path_login: str
     path_get_accounts: str
-    path_get_user: str
-    path_check_entitlement: str
+    path_get_ent_details_for_users: str
     path_llt: str
     path_checkout: str
     path_checkin: str
     path_create_request: str
-    path_request_status: str
+    path_fetch_approval_details: str
     path_create_account: str
     path_update_account: str
 
@@ -95,6 +95,13 @@ class Settings:
     pam_endpoint_aws: str
     pam_endpoint_ec2: str
     pam_account_aws_iam: str
+
+    # ----- Demo identity wiring ---------------------------------------------
+    # The user that submits createrequest on behalf of the requesting user, and
+    # the user used as `userName` for fetchRequestApprovalDetails (i.e., the
+    # workflow approver). For demo v1 both default to the SA itself.
+    demo_requestor: str
+    demo_approver: str
 
     # ----- NHI custom-property mapping (Saviynt customproperty fields) -------
     cp_owner: str
@@ -132,16 +139,20 @@ def load_settings() -> Settings:
         saviynt_password=_env_first(["SAVIYNT_PASSWORD", "SavAPIPass"], required=True),
         saviynt_verify_tls=_env_bool("SAVIYNT_VERIFY_TLS", True),
 
-        # API paths (defaults from validate_secret.py + ARCHITECTURE.md) -----
+        # API paths — Amsterdam GA defaults verified against the live tenant
+        # via saviynt-config/01-03. Override per-tenant via env when needed.
         path_login=_env("PATH_LOGIN", "/ECM/api/login"),
         path_get_accounts=_env("PATH_GET_ACCOUNTS", "/ECM/api/v5/getAccounts"),
-        path_get_user=_env("PATH_GET_USER", "/ECM/api/v5/getUser"),
-        path_check_entitlement=_env("PATH_CHECK_ENTITLEMENT", "/ECM/api/v5/checkUserAccess"),
+        path_get_ent_details_for_users=_env(
+            "PATH_GET_ENT_DETAILS_FOR_USERS", "/ECM/api/v5/getEntDetailsforUsers"
+        ),
         path_llt=_env("PATH_LLT", "/ECM/oauth/access_token_withissuer"),
         path_checkout=_env("PATH_CHECKOUT", "/ECMv6/api/pam/account/checkout"),
         path_checkin=_env("PATH_CHECKIN", "/ECMv6/api/pam/account/checkin"),
         path_create_request=_env("PATH_CREATE_REQUEST", "/ECM/api/v5/createrequest"),
-        path_request_status=_env("PATH_REQUEST_STATUS", "/ECMv6/api/v5/fetchRequestStatus"),
+        path_fetch_approval_details=_env(
+            "PATH_FETCH_APPROVAL_DETAILS", "/ECM/api/v5/fetchRequestApprovalDetails"
+        ),
         path_create_account=_env("PATH_CREATE_ACCOUNT", "/ECM/api/v5/createAccount"),
         path_update_account=_env("PATH_UPDATE_ACCOUNT", "/ECM/api/v5/updateAccount"),
 
@@ -154,6 +165,18 @@ def load_settings() -> Settings:
         pam_endpoint_aws=_env("PAM_ENDPOINT_AWS", "AWS-IAM-Endpoint"),
         pam_endpoint_ec2=_env("PAM_ENDPOINT_EC2", "EC2-Instances-Endpoint"),
         pam_account_aws_iam=_env("PAM_ACCOUNT_AWS_IAM", "pulumi-deployer"),
+
+        # Demo identity wiring ----------------------------------------------
+        # Default both to whatever the SA logs in as. Override DEMO_REQUESTOR
+        # to log requests under a different broker-side identity, or
+        # DEMO_APPROVER to point fetchRequestApprovalDetails at the user
+        # who owns the prod approval workflow when it differs from the SA.
+        demo_requestor=_env_first(
+            ["DEMO_REQUESTOR", "SAVIYNT_USERNAME", "SavAPIUser"], required=True
+        ),
+        demo_approver=_env_first(
+            ["DEMO_APPROVER", "SAVIYNT_USERNAME", "SavAPIUser"], required=True
+        ),
 
         # NHI custom-property mapping ---------------------------------------
         cp_owner=_env("CP_OWNER", "customproperty1"),

@@ -69,8 +69,16 @@ class SaviyntClient:
         *,
         token: str | None = None,
         retry_on_401: bool = True,
+        extra_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        return self._request("POST", path, json_body=payload, token=token, retry_on_401=retry_on_401)
+        return self._request(
+            "POST",
+            path,
+            json_body=payload,
+            token=token,
+            retry_on_401=retry_on_401,
+            extra_headers=extra_headers,
+        )
 
     def _post_form(
         self, path: str, form: dict[str, Any], *, token: str | None = None
@@ -97,12 +105,15 @@ class SaviyntClient:
         params: dict[str, Any] | None = None,
         token: str | None = None,
         retry_on_401: bool = True,
+        extra_headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         url = self._url(path)
         effective_token = token if token is not None else self._access_token
         headers: dict[str, str] = {}
         if effective_token:
             headers["Authorization"] = f"Bearer {effective_token}"
+        if extra_headers:
+            headers.update(extra_headers)
 
         try:
             resp = self._session.request(
@@ -280,6 +291,8 @@ class SaviyntClient:
         username: str,
         entitlement_name: str,
         justification: str,
+        *,
+        requestor: str | None = None,
     ) -> str:
         """
         Open an entitlement-add request via /ECM/api/v5/createrequest
@@ -307,7 +320,7 @@ class SaviyntClient:
             "securitysystem": s.security_system,
             "entitlement": entitlement_name,
             "comments": justification,
-            "requestor": s.demo_requestor,
+            "requestor": requestor or s.demo_requestor,
             "checksod": "false",
         }
         resp = self._post_json(s.path_create_request, payload)
@@ -328,7 +341,9 @@ class SaviyntClient:
             raise SaviyntError("createrequest did not return a request key", body=resp)
         return str(request_id)
 
-    def fetch_request_status(self, request_id: str) -> str:
+    def fetch_request_status(
+        self, request_id: str, *, approver_username: str | None = None
+    ) -> str:
         """
         Poll a request's overall approval status. Returns one of:
         pending, approved, rejected, unknown.
@@ -351,7 +366,7 @@ class SaviyntClient:
         s = self._settings
         payload = {
             "requestKey": str(request_id),
-            "userName": s.demo_approver,
+            "userName": approver_username or s.demo_approver,
         }
         resp = self._post_json(s.path_fetch_approval_details, payload)
         statuses = self._extract_approval_statuses(resp)
@@ -364,6 +379,45 @@ class SaviyntClient:
         if all(u in ("APPROVED", "COMPLETED", "COMPLETE") for u in upper):
             return "approved"
         return "pending"
+
+    def get_pending_requests(
+        self, approver_username: str | None = None, *, max_results: int = 50
+    ) -> dict[str, Any]:
+        """
+        List pending requests in the approver's queue.
+
+        Verified contract (saviynt-config/03-roles-and-users.md §C.7 + IGA
+        briefing): the SAVUSERNAME header is REQUIRED — without it the call
+        returns empty silently.
+        """
+        self._ensure_logged_in()
+        s = self._settings
+        approver = approver_username or s.demo_approver
+        return self._post_json(
+            s.path_get_pending_requests,
+            {"max": str(max_results)},
+            extra_headers={"SAVUSERNAME": approver},
+        )
+
+    def cancel_pending_request(
+        self,
+        request_key: str,
+        *,
+        comments: str = "Cancelled by broker (demo reset)",
+        requestor: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Cancel a still-pending request. Used by the demo-reset path between
+        runs. Has no effect on already-granted entitlements.
+        """
+        self._ensure_logged_in()
+        s = self._settings
+        payload = {
+            "requestor": requestor or s.demo_requestor,
+            "requestkey": str(request_key),
+            "comments": comments,
+        }
+        return self._post_json(s.path_cancel_pending_request, payload)
 
     @staticmethod
     def _extract_approval_statuses(resp: Any) -> list[str]:

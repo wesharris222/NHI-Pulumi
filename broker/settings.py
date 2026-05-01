@@ -83,6 +83,8 @@ class Settings:
     path_checkin: str
     path_create_request: str
     path_fetch_approval_details: str
+    path_get_pending_requests: str
+    path_cancel_pending_request: str
     path_create_account: str
     path_update_account: str
 
@@ -152,6 +154,12 @@ def load_settings() -> Settings:
         path_create_request=_env("PATH_CREATE_REQUEST", "/ECM/api/v5/createrequest"),
         path_fetch_approval_details=_env(
             "PATH_FETCH_APPROVAL_DETAILS", "/ECM/api/v5/fetchRequestApprovalDetails"
+        ),
+        path_get_pending_requests=_env(
+            "PATH_GET_PENDING_REQUESTS", "/ECM/api/v5/getPendingRequests"
+        ),
+        path_cancel_pending_request=_env(
+            "PATH_CANCEL_PENDING_REQUEST", "/ECM/api/v5/cancelPendingRequest"
         ),
         path_create_account=_env("PATH_CREATE_ACCOUNT", "/ECM/api/v5/createAccount"),
         path_update_account=_env("PATH_UPDATE_ACCOUNT", "/ECM/api/v5/updateAccount"),

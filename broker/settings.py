@@ -138,7 +138,7 @@ def load_settings() -> Settings:
         path_llt=_env("PATH_LLT", "/ECM/oauth/access_token_withissuer"),
         path_checkout=_env("PATH_CHECKOUT", "/ECMv6/api/pam/account/checkout"),
         path_checkin=_env("PATH_CHECKIN", "/ECMv6/api/pam/account/checkin"),
-        path_create_request=_env("PATH_CREATE_REQUEST", "/ECM/api/v5/createRequest"),
+        path_create_request=_env("PATH_CREATE_REQUEST", "/ECM/api/v5/createUserAccessRequest"),
         path_request_status=_env("PATH_REQUEST_STATUS", "/ECMv6/api/v5/fetchRequestStatus"),
         path_create_account=_env("PATH_CREATE_ACCOUNT", "/ECM/api/v5/createAccount"),
         path_update_account=_env("PATH_UPDATE_ACCOUNT", "/ECM/api/v5/updateAccount"),

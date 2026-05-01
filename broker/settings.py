@@ -30,6 +30,27 @@ def _env(name: str, default: str | None = None, *, required: bool = False) -> st
     return val or ""
 
 
+def _env_first(names: list[str], default: str | None = None, *, required: bool = False) -> str:
+    """Return the first non-empty value among `names`, else `default`.
+
+    Lets the broker accept legacy env-var names already exported on the
+    Ubuntu host (SavURL / SavAPIUser / SavAPIPass) without forcing a
+    rename. The canonical name (first in the list) wins when both are set.
+    """
+    for name in names:
+        val = os.environ.get(name)
+        if val:
+            return val
+    if default is not None:
+        return default
+    if required:
+        raise RuntimeError(
+            f"Required environment variable not set. Looked for: {', '.join(names)}. "
+            f"Set one of these or fill in broker/.env."
+        )
+    return ""
+
+
 def _env_int(name: str, default: int) -> int:
     raw = os.environ.get(name)
     if raw is None or raw == "":
@@ -102,9 +123,11 @@ class Settings:
 def load_settings() -> Settings:
     return Settings(
         # Saviynt connection -------------------------------------------------
-        saviynt_base_url=_env("SAVIYNT_BASE_URL", required=True).rstrip("/"),
-        saviynt_username=_env("SAVIYNT_USERNAME", required=True),
-        saviynt_password=_env("SAVIYNT_PASSWORD", required=True),
+        # Each accepts a canonical name OR the legacy name already exported on
+        # the Ubuntu host. Canonical wins if both are set.
+        saviynt_base_url=_env_first(["SAVIYNT_BASE_URL", "SavURL"], required=True).rstrip("/"),
+        saviynt_username=_env_first(["SAVIYNT_USERNAME", "SavAPIUser"], required=True),
+        saviynt_password=_env_first(["SAVIYNT_PASSWORD", "SavAPIPass"], required=True),
         saviynt_verify_tls=_env_bool("SAVIYNT_VERIFY_TLS", True),
 
         # API paths (defaults from validate_secret.py + ARCHITECTURE.md) -----

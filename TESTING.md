@@ -65,10 +65,12 @@ bash scripts/gen_hmac_secret.sh   # copy the hex output into BROKER_HMAC_SECRET 
 
 Edit `broker/.env` and set at minimum:
 
-- `SAVIYNT_BASE_URL`
-- `SAVIYNT_USERNAME`
-- `SAVIYNT_PASSWORD`
-- `BROKER_HMAC_SECRET`
+- `SAVIYNT_BASE_URL` — **skip this if `SavURL` is already exported on the Ubuntu host**
+- `SAVIYNT_USERNAME` — **skip this if `SavAPIUser` is already exported**
+- `SAVIYNT_PASSWORD` — **skip this if `SavAPIPass` is already exported**
+- `BROKER_HMAC_SECRET` (always required)
+
+The broker reads either name; canonical wins if both are set.
 
 Leave every Saviynt API path at its default — Test 1 only exercises `/ECM/api/login`, which is already confirmed against your validator script.
 

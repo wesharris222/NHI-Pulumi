@@ -81,15 +81,44 @@ All three should print non-empty. If any are blank, source whatever file
 exports them (`~/.bashrc`, `~/.profile`, a systemd service env file) before
 continuing.
 
-#### Step 2 — Pull the repo
+#### Step 2 — Pull the repo (SSH)
+
+The Ubuntu broker host already has an SSH key registered with this GitHub
+account, so use the SSH remote — no PAT prompts.
+
+First, confirm SSH auth works:
+
+```bash
+ssh -T git@github.com
+# Expect: "Hi wesharris222! You've successfully authenticated, ..."
+```
+
+Clone:
 
 ```bash
 cd ~        # or wherever you want it
-git clone https://github.com/wesharris222/NHI-Pulumi.git
+git clone git@github.com:wesharris222/NHI-Pulumi.git
 cd NHI-Pulumi
 ```
 
-(If you've already cloned it, `git pull` to grab the latest broker code.)
+If the clone reports `Permission denied (publickey)`, the SSH agent isn't
+loading the key in this shell:
+
+```bash
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519   # or whichever key file is registered with GitHub
+ssh -T git@github.com       # retry the auth check
+```
+
+If you've already cloned the repo via HTTPS, flip the existing remote to SSH
+instead of re-cloning:
+
+```bash
+cd NHI-Pulumi
+git remote set-url origin git@github.com:wesharris222/NHI-Pulumi.git
+git remote -v   # should now show git@github.com:... for both fetch and push
+git pull        # grabs the latest broker code without re-prompting
+```
 
 #### Step 3 — Python venv + dependencies
 

@@ -25,7 +25,7 @@ GitHub repo (free)
 GitHub Actions (self-hosted runner on Ubuntu VM)
   │ HMAC-signed requests
   ▼
-FastAPI Broker (localhost:8443 on Ubuntu VM)
+FastAPI Broker (localhost:18443 on Ubuntu VM)
   │ Saviynt SA bearer token
   ▼
 Saviynt EIC tenant (existing)
@@ -135,7 +135,7 @@ Pipeline calls broker /register-nhi → vaults credentials in Saviynt PAM
 6. Job: `cleanup` — always runs, calls `/checkin-aws`
 
 **Secrets needed in GitHub repo:**
-- `BROKER_URL` (e.g., `http://localhost:8443` if self-hosted runner)
+- `BROKER_URL` (e.g., `http://localhost:18443` if self-hosted runner)
 - `BROKER_HMAC_SECRET`
 - `PULUMI_ACCESS_TOKEN`
 

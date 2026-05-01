@@ -7,7 +7,7 @@
 # tenant connectivity AND broker correctness in one pass.
 #
 # Usage:
-#   BROKER_URL=http://127.0.0.1:8443 \
+#   BROKER_URL=http://127.0.0.1:18443 \
 #   BROKER_HMAC_SECRET=$(cat ../broker/.env | grep BROKER_HMAC_SECRET | cut -d= -f2) \
 #   REQUESTING_USER=wes-dev \
 #   ./scripts/test_broker.sh
@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-BROKER_URL="${BROKER_URL:-http://127.0.0.1:8443}"
+BROKER_URL="${BROKER_URL:-http://127.0.0.1:18443}"
 HMAC_SECRET="${BROKER_HMAC_SECRET:?BROKER_HMAC_SECRET must be set}"
 REQUESTING_USER="${REQUESTING_USER:-wes-dev}"
 TARGET_ENV="${TARGET_ENV:-dev}"

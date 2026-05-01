@@ -17,7 +17,7 @@
 │                                                                       │
 │  ┌────────────────────────┐         ┌──────────────────────────┐    │
 │  │  GitHub Actions Runner │         │  FastAPI Broker          │    │
-│  │  (self-hosted)         │ ──────▶ │  localhost:8443          │    │
+│  │  (self-hosted)         │ ──────▶ │  localhost:18443          │    │
 │  │                        │         │                          │    │
 │  │  Runs Pulumi here      │         │  Endpoints:              │    │
 │  │  AWS creds via env     │         │   /preflight             │    │

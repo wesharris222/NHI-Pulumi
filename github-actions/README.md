@@ -21,7 +21,7 @@ The CI/CD workflow that orchestrates broker calls and Pulumi runs. Runs on a sel
 
 | Secret | Purpose |
 |---|---|
-| `BROKER_URL` | e.g., `http://localhost:8443` if self-hosted runner is on same VM as broker |
+| `BROKER_URL` | e.g., `http://localhost:18443` if self-hosted runner is on same VM as broker |
 | `BROKER_HMAC_SECRET` | Shared HMAC key with the broker |
 | `PULUMI_ACCESS_TOKEN` | For Pulumi Cloud state |
 
@@ -35,4 +35,4 @@ The CI/CD workflow that orchestrates broker calls and Pulumi runs. Runs on a sel
 
 ## Self-hosted runner
 
-The runner runs on the same Ubuntu VM as the broker. Broker is bound to `127.0.0.1:8443`, so the runner can reach it as `localhost` without exposing it to the internet. See `SETUP.md` (created in Phase 3) for installation.
+The runner runs on the same Ubuntu VM as the broker. Broker is bound to `127.0.0.1:18443`, so the runner can reach it as `localhost` without exposing it to the internet. See `SETUP.md` (created in Phase 3) for installation.

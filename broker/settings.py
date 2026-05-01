@@ -173,7 +173,7 @@ def load_settings() -> Settings:
 
         # Server ------------------------------------------------------------
         listen_host=_env("BROKER_LISTEN_HOST", "127.0.0.1"),
-        listen_port=_env_int("BROKER_LISTEN_PORT", 8443),
+        listen_port=_env_int("BROKER_LISTEN_PORT", 18443),
         log_level=_env("BROKER_LOG_LEVEL", "INFO"),
     )
 

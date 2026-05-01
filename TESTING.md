@@ -174,7 +174,7 @@ values from `SavURL` / `SavAPIUser` / `SavAPIPass` in your shell environment.
 In **terminal A**, from the repo root:
 
 ```bash
-.venv/bin/python -m uvicorn broker.main:app --host 127.0.0.1 --port 8443
+.venv/bin/python -m uvicorn broker.main:app --host 127.0.0.1 --port 18443
 ```
 
 You should see uvicorn log lines ending with `Application startup complete.`
@@ -186,7 +186,7 @@ a missing required env var, recheck Step 1.
 In **terminal B**, from the repo root:
 
 ```bash
-export BROKER_URL=http://127.0.0.1:8443
+export BROKER_URL=http://127.0.0.1:18443
 export BROKER_HMAC_SECRET=$(cat /tmp/hmac.txt)
 bash scripts/test_broker.sh --auth-only
 ```
@@ -242,7 +242,7 @@ export SavURL='https://your-tenant.saviyntcloud.com'
 export SavAPIUser='svc-pulumi-broker'
 export SavAPIPass='...'
 export BROKER_HMAC_SECRET=$(bash scripts/gen_hmac_secret.sh)
-.venv/Scripts/python -m uvicorn broker.main:app --host 127.0.0.1 --port 8443
+.venv/Scripts/python -m uvicorn broker.main:app --host 127.0.0.1 --port 18443
 ```
 
 Then the same Step 6 + Step 7 from another git-bash terminal.

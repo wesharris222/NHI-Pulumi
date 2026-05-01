@@ -52,7 +52,7 @@ cp .env.example .env
 
 # From the repo root, so the broker.* package imports resolve:
 cd ..
-uvicorn broker.main:app --host 127.0.0.1 --port 8443 --reload
+uvicorn broker.main:app --host 127.0.0.1 --port 18443 --reload
 ```
 
 ## Smoke test
@@ -60,7 +60,7 @@ uvicorn broker.main:app --host 127.0.0.1 --port 8443 --reload
 In another terminal:
 
 ```bash
-export BROKER_URL=http://127.0.0.1:8443
+export BROKER_URL=http://127.0.0.1:18443
 export BROKER_HMAC_SECRET=<same value as in broker/.env>
 export REQUESTING_USER=wes-dev
 export TARGET_ENV=dev

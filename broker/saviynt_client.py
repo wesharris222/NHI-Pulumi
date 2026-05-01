@@ -239,13 +239,17 @@ class SaviyntClient:
         )
 
     # ------------------------------------------------------------------ entitlement
+    # Statuses that suggest the configured entitlement-check path is wrong /
+    # absent on this tenant — fall back to a getUser scan instead of failing.
+    _ENT_CHECK_FALLBACK_STATUSES = {403, 404, 405}
+
     def user_has_entitlement(self, username: str, entitlement_name: str) -> bool:
         """
         Check whether a user already holds an entitlement.
 
-        Uses checkUserAccess if available; falls back to scanning getUser results.
-        Tenant-specific. The default endpoint name is configurable in settings
-        (PATH_CHECK_ENTITLEMENT) and will be confirmed in Phase 5.
+        Tries the configured PATH_CHECK_ENTITLEMENT first. On any sign that
+        the path is missing on this tenant (403/404/405, or a non-JSON HTML
+        body), falls back to scanning getUser results.
         """
         self._ensure_logged_in()
         payload = {
@@ -256,10 +260,23 @@ class SaviyntClient:
         try:
             resp = self._post_json(self._settings.path_check_entitlement, payload)
         except SaviyntError as e:
-            if e.status == 404:
-                # Endpoint shape differs per tenant; fall back to getUser scan.
+            if e.status in self._ENT_CHECK_FALLBACK_STATUSES or self._looks_like_html(e.body):
+                log.info(
+                    "Entitlement-check path %s returned status=%s; falling back to getUser scan",
+                    self._settings.path_check_entitlement,
+                    e.status,
+                )
                 return self._user_has_entitlement_fallback(username, entitlement_name)
             raise
+
+        # If the response came back HTML-ish (200 but Tomcat default page),
+        # treat it the same as a missing endpoint.
+        if self._looks_like_html(resp):
+            log.info(
+                "Entitlement-check path %s returned non-JSON; falling back to getUser scan",
+                self._settings.path_check_entitlement,
+            )
+            return self._user_has_entitlement_fallback(username, entitlement_name)
 
         # Common response shapes
         for key in ("hasAccess", "hasaccess", "result"):
@@ -270,6 +287,16 @@ class SaviyntClient:
                 return val.strip().lower() in ("true", "yes", "1")
         # If we got here without a definitive answer, treat as no.
         return False
+
+    @staticmethod
+    def _looks_like_html(body: Any) -> bool:
+        if not isinstance(body, dict):
+            return False
+        raw = body.get("raw")
+        if not isinstance(raw, str):
+            return False
+        head = raw.lstrip().lower()[:200]
+        return head.startswith("<!doctype html") or head.startswith("<html")
 
     def _user_has_entitlement_fallback(self, username: str, entitlement_name: str) -> bool:
         resp = self._post_json(

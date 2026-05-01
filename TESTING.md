@@ -8,8 +8,8 @@
 
 | # | Test | Goal | Status |
 |---|------|------|--------|
-| 1 | Broker auth + Saviynt login | Broker boots, HMAC works, SA can log in | Not started |
-| 2 | Entitlement check (dev path) | `/preflight dev` returns `ok` for an entitled user | Pending Test 1 |
+| 1 | Broker auth + Saviynt login | Broker boots, HMAC works, SA can log in | **PASSED** (2026-05-01) |
+| 2 | Entitlement check (dev path) | `/preflight dev` returns `ok` for an entitled user | In progress |
 | 3 | AWS PAM checkout | `/checkout-aws` returns valid AWS creds | Pending Test 2 |
 | 4 | NHI registration | `/register-nhi` creates an EC2 NHI account | Pending Test 3 |
 | 5 | Approval flow (prod path) | `/preflight prod` opens a request; approval resumes | Pending Test 4 |
@@ -263,11 +263,26 @@ Once green, fill in:
 - Did `/preflight` return 200 or 502 with a different-path error: `__________________________`
 - If different-path error, which path failed: `__________________________`
 
+### Recorded results (Test 1)
+
+- Tenant base URL: `https://eic-poc-wesharris.saviyntcloud.com`
+- SA username: `igaadmin`
+- Login response: [x] `access_token` present  [x] `refresh_token` present
+- `/preflight dev` response: 502 `saviynt_error` mentioning `/ECM/api/v5/checkUserAccess` — entitlement-check path needs override (handed off to Test 2)
+
 ### Notes / corrections
 
-_(append observations as you go — gotchas, version differences, paths that need overriding)_
-
-- _none yet_
+- `/ECM/api/v5/checkUserAccess` returns HTTP 403 with a Tomcat default HTML
+  page on this tenant — the path almost certainly doesn't exist. Broker's
+  fallback (`getUser`-and-scan) was only triggering on 404; widened to
+  cover 403/405/HTML responses in commit `<TBD>`.
+- `.env.example` ships canonical `SAVIYNT_*` lines commented out so the
+  exported `SavURL`/`SavAPIUser`/`SavAPIPass` aren't shadowed by placeholder
+  values. If you re-clone, this is now the default — no manual sed needed.
+- Python 3.8 needs `eval_type_backport` for pydantic to evaluate PEP-604
+  union syntax. Already in `broker/requirements.txt` for `python_version < "3.10"`.
+- `/etc/environment` vars need `set -a; . /etc/environment; set +a` in
+  `~/.bashrc` to inherit into Python subprocesses.
 
 ---
 

@@ -35,9 +35,8 @@ any Saviynt object configuration beyond a service account user.
 ### What you need
 
 - Saviynt EIC tenant access with admin rights (to create or identify the SA)
-- Saviynt base URL in the form `https://<tenant>.saviyntcloud.com`
-- A host with Python 3.11+ for the broker
-- Bash + `curl` + `openssl` + `xxd` for the smoke test (git-bash on Windows is fine)
+- A host with Python 3.11+ for the broker (**Ubuntu broker host preferred** — see below)
+- Bash + `curl` + `openssl` + `xxd` for the smoke test
 - Network egress from the broker host to your tenant on 443
 
 ### Saviynt configuration
@@ -48,52 +47,117 @@ When that's complete you should have:
 
 - A Saviynt service account username + password
 - Confirmed via curl that `/ECM/api/login` returns both `access_token` **and** `refresh_token`
-- The exact `SAVIYNT_BASE_URL` you'll put in `broker/.env`
+- The tenant base URL
 
-### Broker configuration
+### Saviynt credentials — env vars vs `.env`
 
-From the repo root:
+The broker reads any of these for each value (canonical wins if both are set):
+
+| What | Canonical name | Legacy name (Ubuntu host already has this) |
+|---|---|---|
+| Tenant URL | `SAVIYNT_BASE_URL` | `SavURL` |
+| SA username | `SAVIYNT_USERNAME` | `SavAPIUser` |
+| SA password | `SAVIYNT_PASSWORD` | `SavAPIPass` |
+
+The Ubuntu broker host already exports `SavURL` / `SavAPIUser` / `SavAPIPass`,
+so on that host you do **not** need to put those three values in `broker/.env`.
+The only thing `broker/.env` needs is `BROKER_HMAC_SECRET`.
+
+### Run procedure (Ubuntu broker host)
+
+Do these in order on the Ubuntu broker VM. Each step has a verification you
+should not skip — failures get cheaper to diagnose if you catch them at the
+step that introduced them.
+
+#### Step 1 — Confirm tenant env vars are present in this shell
 
 ```bash
-python -m venv .venv
-.venv/Scripts/python -m pip install -r broker/requirements.txt   # Windows
-# or: .venv/bin/python -m pip install -r broker/requirements.txt # macOS/Linux
+echo "SavURL    : $SavURL"
+echo "SavAPIUser: $SavAPIUser"
+echo "SavAPIPass: ${SavAPIPass:+(set, length=${#SavAPIPass})}"
+```
 
+All three should print non-empty. If any are blank, source whatever file
+exports them (`~/.bashrc`, `~/.profile`, a systemd service env file) before
+continuing.
+
+#### Step 2 — Pull the repo
+
+```bash
+cd ~        # or wherever you want it
+git clone https://github.com/wesharris222/NHI-Pulumi.git
+cd NHI-Pulumi
+```
+
+(If you've already cloned it, `git pull` to grab the latest broker code.)
+
+#### Step 3 — Python venv + dependencies
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r broker/requirements.txt
+```
+
+Verify:
+
+```bash
+.venv/bin/python -c "import broker.main; print('imports OK')"
+```
+
+You should see `imports OK`. If not, the venv didn't activate or a dep
+failed to install — fix before proceeding.
+
+#### Step 4 — Generate HMAC secret and create `.env`
+
+```bash
+HMAC=$(bash scripts/gen_hmac_secret.sh)
 cp broker/.env.example broker/.env
-bash scripts/gen_hmac_secret.sh   # copy the hex output into BROKER_HMAC_SECRET in .env
+# Replace the placeholder line with the real value:
+sed -i "s|^BROKER_HMAC_SECRET=.*|BROKER_HMAC_SECRET=$HMAC|" broker/.env
+echo "$HMAC" > /tmp/hmac.txt   # we'll need this in the test terminal
 ```
 
-Edit `broker/.env` and set at minimum:
+Leave the `SAVIYNT_BASE_URL` / `SAVIYNT_USERNAME` / `SAVIYNT_PASSWORD` lines
+in `broker/.env` as-is (placeholders) — the broker will pick up the real
+values from `SavURL` / `SavAPIUser` / `SavAPIPass` in your shell environment.
 
-- `SAVIYNT_BASE_URL` — **skip this if `SavURL` is already exported on the Ubuntu host**
-- `SAVIYNT_USERNAME` — **skip this if `SavAPIUser` is already exported**
-- `SAVIYNT_PASSWORD` — **skip this if `SavAPIPass` is already exported**
-- `BROKER_HMAC_SECRET` (always required)
+#### Step 5 — Start the broker
 
-The broker reads either name; canonical wins if both are set.
-
-Leave every Saviynt API path at its default — Test 1 only exercises `/ECM/api/login`, which is already confirmed against your validator script.
-
-Start the broker (from the repo root, not from `broker/`):
+In **terminal A**, from the repo root:
 
 ```bash
-.venv/Scripts/python -m uvicorn broker.main:app --host 127.0.0.1 --port 8443
+.venv/bin/python -m uvicorn broker.main:app --host 127.0.0.1 --port 8443
 ```
 
-Leave it running.
+You should see uvicorn log lines ending with `Application startup complete.`
+Leave this terminal running. If the broker exits with a `RuntimeError` about
+a missing required env var, recheck Step 1.
 
-### Run
+#### Step 6 — Auth-only smoke (no Saviynt calls)
 
-In a second terminal:
+In **terminal B**, from the repo root:
 
 ```bash
 export BROKER_URL=http://127.0.0.1:8443
-export BROKER_HMAC_SECRET=<same value as in broker/.env>
-
-# 1. Auth-only smoke (no Saviynt calls — proves broker + HMAC are wired up)
+export BROKER_HMAC_SECRET=$(cat /tmp/hmac.txt)
 bash scripts/test_broker.sh --auth-only
+```
 
-# 2. One signed /preflight to force a real Saviynt login
+Expect three `[PASS]` lines:
+
+- `/healthz returned 200`
+- `unsigned request rejected (422)`
+- `bad signature rejected (401)`
+
+If this fails, the broker isn't reachable or HMAC config is mismatched —
+fix before Step 7.
+
+#### Step 7 — Signed `/preflight` to force a real Saviynt login
+
+Still in terminal B:
+
+```bash
 TS=$(date +%s)
 NONCE=$(head -c 16 /dev/urandom | xxd -p)
 BODY='{"requesting_user":"someone","target_env":"dev","justification":"smoke"}'
@@ -108,6 +172,33 @@ curl -sS -w '\nHTTP %{http_code}\n' -X POST "$BROKER_URL/preflight" \
   -H "X-Broker-Signature: $SIG" \
   -d "$BODY"
 ```
+
+Capture the response body and the HTTP status. Match it against the table
+in **Expected results** below.
+
+#### Step 8 — Stop the broker and clean up
+
+When you're done, in terminal A press `Ctrl+C`, then:
+
+```bash
+rm -f /tmp/hmac.txt
+```
+
+### Alternate: Windows local dev (optional)
+
+You can run the broker on your Windows workstation for fast iteration. Set
+the three Saviynt env vars yourself before launching uvicorn:
+
+```bash
+# git-bash, from repo root
+export SavURL='https://your-tenant.saviyntcloud.com'
+export SavAPIUser='svc-pulumi-broker'
+export SavAPIPass='...'
+export BROKER_HMAC_SECRET=$(bash scripts/gen_hmac_secret.sh)
+.venv/Scripts/python -m uvicorn broker.main:app --host 127.0.0.1 --port 8443
+```
+
+Then the same Step 6 + Step 7 from another git-bash terminal.
 
 ### Expected results
 

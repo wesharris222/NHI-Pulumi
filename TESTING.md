@@ -318,7 +318,51 @@ entitlement+endpoint pair on the tenant.
 
 ---
 
-## Test 2-6
+## Test 2: Entitlement check + access-request submit (full green)
 
-To be filled in once Test 1 passes. Each test will follow the same structure:
-goal, prereqs, Saviynt config (via Claude Desktop prompt in `docs/claude-desktop-prompts/`), broker config, run, expected results, recordings.
+**Plumbing already validated** — see Recorded results above. To turn this
+test 200-green we need the demo's IGA objects to exist in the tenant.
+
+### Saviynt configuration (Phase 4)
+
+Use Claude Desktop with the prompt in
+[`docs/claude-desktop-prompts/phase-04-saviynt-iga-objects.md`](docs/claude-desktop-prompts/phase-04-saviynt-iga-objects.md).
+It produces step-by-step instructions plus per-step API verifications for:
+
+- A. Security System + Endpoint named `Pulumi-Pipeline-AWS`
+- B. Two entitlements: `Deploy-EC2-Dev` (auto-approve) and `Deploy-EC2-Prod` (manual via `wes-approver`)
+- C. Two demo users: `wes-dev` (assigned `Deploy-EC2-Dev` directly) and `wes-approver`
+
+### Run after Phase 4
+
+```bash
+# Dev path — wes-dev already holds Deploy-EC2-Dev → expect 200 status:ok
+bash scripts/preflight.sh wes-dev dev
+
+# Prod path — wes-dev does NOT hold Deploy-EC2-Prod → expect 200 status:pending
+# with a RequestId. Note the RequestId for Test 5 (poll + approve).
+bash scripts/preflight.sh wes-dev prod
+```
+
+### Expected results
+
+| Run | Expected | Why |
+|---|---|---|
+| `preflight wes-dev dev` | `200 {"status":"ok", "entitlement":"Deploy-EC2-Dev", ...}` | `wes-dev` was directly assigned this entitlement during Phase 4 user setup |
+| `preflight wes-dev prod` | `200 {"status":"pending", "request_id":"...", "entitlement":"Deploy-EC2-Prod", ...}` | `wes-dev` doesn't hold it; broker submits createrequest; manual workflow takes over |
+| `preflight igaadmin prod` | Either `ok` or `pending` depending on whether igaadmin holds it | Useful sanity-only |
+
+### What to record
+
+- Dev preflight returned 200 ok: `[ ]`
+- Prod preflight returned 200 pending with RequestId: `[ ]`  RequestId captured: `__________`
+- Approver `wes-approver` saw the request in their Saviynt queue: `[ ]`
+
+---
+
+## Tests 3-6
+
+To be filled in once Test 2 is fully green. Each test will follow the same
+structure: goal, prereqs, Saviynt config (via Claude Desktop prompt in
+`docs/claude-desktop-prompts/`), broker config, run, expected results,
+recordings.

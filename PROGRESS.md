@@ -2,9 +2,9 @@
 
 > **Purpose of this file:** This is the working roadmap for the demo. Update statuses as you build. When picking up in a new Claude Code session, this file (plus README.md and ARCHITECTURE.md) gives full context to continue without re-explaining the design.
 
-## Project State: 🟡 SCAFFOLDING — Design complete, code not yet written
+## Project State: 🟢 IGA CONFIG VERIFIED — Demo flow proven end-to-end via API. Broker implementation next.
 
-Last updated: Demo initial scaffold
+Last updated: 2026-05-08 — IGA config Section A/B/C verified against tenant; both demo paths (dev auto-approve, prod manual approve via wes-approver) confirmed working with real `createrequest` → `fetchRequestApprovalDetails` → UI approval → `getEntDetailsforUsers` cycles.
 
 ---
 
@@ -139,16 +139,16 @@ Pipeline calls broker /register-nhi → vaults credentials in Saviynt PAM
 - `BROKER_HMAC_SECRET`
 - `PULUMI_ACCESS_TOKEN`
 
-### Phase 4 — Saviynt Tenant Configuration ⏳
+### Phase 4 — Saviynt Tenant Configuration 🟢 IGA SIDE DONE (PAM still pending)
 **Location:** `saviynt-config/`
 **Goal:** Step-by-step guide for setting up the tenant objects this demo needs.
 
-- [ ] `saviynt-config/00-OVERVIEW.md` — what you're building and why
-- [ ] `saviynt-config/01-application-onboarding.md` — Pulumi-Pipeline-AWS application object
-- [ ] `saviynt-config/02-entitlements.md` — EC2Deploy-Dev (auto-approve) and EC2Deploy-Prod (manual approve)
-- [ ] `saviynt-config/03-roles-and-users.md` — wes-dev (Developer) and wes-approver
-- [ ] `saviynt-config/04-pam-endpoint.md` — endpoint for AWS IAM and EC2 instances
-- [ ] `saviynt-config/05-service-account.md` — broker SA setup with rotation policy
+- [x] `saviynt-config/01-application-onboarding.md` — Pulumi-Pipeline-AWS Security System + Endpoint **(verified in tenant)**
+- [x] `saviynt-config/02-entitlements.md` — EC2Deploy-Dev + EC2Deploy-Prod under EntDev/EntProd types **(verified; workflow architecture corrected from per-type to single SS-level with If-Else)**
+- [x] `saviynt-config/03-roles-and-users.md` — wes-dev with EC2Deploy-Dev directly assigned, wes-approver for prod approvals **(verified; payload shape and requestor=beneficiary rule corrected)**
+- [ ] `saviynt-config/00-OVERVIEW.md` — *not written yet, optional*
+- [ ] `saviynt-config/04-pam-endpoint.md` — endpoint for AWS IAM and EC2 instances *(Phase 5 prerequisite)*
+- [ ] `saviynt-config/05-service-account.md` — broker SA setup with rotation policy *(Phase 5 prerequisite)*
 - [ ] `saviynt-config/06-test-checklist.md` — pre-demo validation steps
 
 ### Phase 5 — Local Testing & Saviynt Endpoint Confirmation ⏳
@@ -177,8 +177,11 @@ Pipeline calls broker /register-nhi → vaults credentials in Saviynt PAM
 
 | Question | Status | Notes |
 |---|---|---|
-| Exact Saviynt endpoint paths for createRequest, fetchRequestStatus, createAccount, checkin | ⚠️ To confirm in Phase 5 | Pre-filled with educated guesses, configurable in settings.py |
-| Custom property mapping for NHI metadata (which customproperty fields hold owner, env, etc.) | ⚠️ To decide in Phase 4 | Will document in saviynt-config/01-application-onboarding.md |
+| Exact Saviynt endpoint paths for createRequest, fetchRequestApprovalDetails, getEntDetailsforUsers, getAccounts | ✅ Verified in tenant | All under `/ECM/api/v5/`. Captured in `saviynt-config/03-roles-and-users.md` settings.py block. |
+| createrequest payload shape | ✅ Verified | `entitlement` is array-of-objects; `accountname` required; `requestor` must equal beneficiary for manual approval to fire |
+| Workflow architecture (per-type vs SS-level + If-Else) | ✅ Resolved | One SS-level workflow with If-Else on `entitlement.entitlementtypekey.entitlementname` is what actually works; per-type bindings don't fire for entitlement add requests in this tenant |
+| Auto-completion of provisioning tasks for disconnected endpoint | ⚠️ Open | `instantprovision: true` insufficient. Plan: broker calls `updateTasks` to close task itself after detecting APPROVED. Optional: try `automatedProvisioning: true` on SS. |
+| Custom property mapping for NHI metadata (which customproperty fields hold owner, env, etc.) | ⚠️ To decide in Phase 4 PAM section | Will document in `saviynt-config/04-pam-endpoint.md` (not yet written) |
 | Whether to add a quarterly NHI certification campaign as a Phase 7 extension | 💭 Optional | Strong story but adds Saviynt config complexity |
 | AWS region failover (us-east-1 only?) | ✅ us-east-1 only | Confirmed by user |
 
@@ -203,6 +206,62 @@ When you continue this work:
 2. Read `README.md` — the high-level pitch
 3. Read `ARCHITECTURE.md` — the detailed design
 4. Read `TALK_TRACK.md` — what you're saying during the demo
-5. Pick up at the first unchecked Phase 1 item
+5. Read `CLAUDE.md` — **critical contracts and verified architecture** (corrected after live testing)
+6. Pick up at the first unchecked Phase 1 (Broker) item
 
 Hand Claude Code the entire `saviynt-pulumi-demo/` folder and it will have full context.
+
+---
+
+## Phase 4 — Verified IGA Configuration Snapshot (2026-05-08)
+
+This section records what's actually in the tenant after verification testing. If anything in `saviynt-config/*.md` conflicts with these values, the tenant is the source of truth — update the docs.
+
+**Tenant:** `https://eic-poc-wesharris.saviyntcloud.com`
+
+**Security System:** `Pulumi-Pipeline-AWS`
+- `accessAddWorkflow`: `WF-PulumiPipeline-AddAccess` (one workflow, branches inside via If-Else)
+- `accessRemoveWorkflow`: blank (or set to a simple auto-approve to allow easy reset between demo runs)
+- `automatedProvisioning`: false ← *try true to test auto-completion of tasks*
+- `useopenconnector`: true
+- `instantprovision`: true
+
+**Endpoint:** `Pulumi-Pipeline-AWS` (under above SS)
+- Resource Owner: `wes-approver` (userKey 3452) — populates the `requestowner` field that Resource Owner Approval reads, but we ended up using Custom Assignment instead so this is informational
+- Requestable: ON
+
+**Entitlement Types** (under endpoint):
+- `EntDev` (display: "Pipeline Access - Dev") — `workflow` field has the JSON-wrapped name but is *not* what fires; SS-level workflow handles routing
+- `EntProd` (display: "Pipeline Access - Prod") — same
+
+**Entitlements:**
+- `EC2Deploy-Dev` under EntDev (requestable, status 1, risk Low) — assigned directly to wes-dev
+- `EC2Deploy-Prod` under EntProd (requestable, status 1, risk High) — NOT assigned to wes-dev (the demo's prod-path trigger)
+
+**Workflow:** `WF-PulumiPipeline-AddAccess`
+- Type: **Parallel** (mandatory for entitlement-object If-Else conditions)
+- Status: Active (must Send For Approval → Accept after each edit)
+- Canvas:
+  ```
+  Start
+    └→ If-Else (entitlement.entitlementtypekey.entitlementname.equals('EntProd') eq true)
+         ├─ True  → Custom Assignment (Username = wes-approver) → Grant Access → End
+         │                                                      ↘ Rejected Access → End
+         │                                                      ↘ Escalation → End
+         └─ False → Grant Access → End
+  ```
+- Custom Assignment block: Name=`Prod-Manual-Approval`, Select User Field=`Username`, User Group=`wes-approver`, Type Of Approval=`Any Owner Approval Required`, MC Required for Risk=`None`, Notification Email Template populated.
+
+**Users:**
+- `igaadmin` (userKey 6) — broker SA
+- `wes-dev` (userKey 3451) — beneficiary; holds EC2Deploy-Dev; account `wes-dev` on Pulumi-Pipeline-AWS endpoint, mapped (userKey populated)
+- `wes-approver` (userKey 3452) — approver; SAV Role: ROLE_ADMIN; no account on the endpoint (not required)
+
+**Verified test results:**
+- ✅ Dev path: createrequest for `EC2Deploy-Dev` with `requestor: igaadmin` → auto-approves immediately → after manual task close, entitlement appears on wes-dev
+- ✅ Prod path: createrequest for `EC2Deploy-Prod` with `requestor: wes-dev` (NOT igaadmin) → PENDING with assignee `wes-approver` → wes-approver approves in UI → APPROVED → manual task close → entitlement on wes-dev
+
+**Known follow-ups for Phase 5+:**
+1. Auto-completion of provisioning tasks (currently manual; broker should call `updateTasks` API)
+2. Reset script: revoke EC2Deploy-Prod between demo runs
+3. NHI registration custom-property mapping (Phase 4 PAM section, not yet written)

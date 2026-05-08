@@ -1,6 +1,22 @@
 # 02 — Entitlement Types, Workflows, and Entitlements
 
-> **Goal:** Stand up the IGA structure that drives the demo's two outcomes — auto-approve for dev and manual-approve for prod — using **two Entitlement Types** under one endpoint, each with its own Add Workflow bound at the type level. Then create the two entitlements as instances under their corresponding types.
+> ## ⚠️ Architecture Correction — Read This First (post-verification, 2026-05-08)
+>
+> The original guidance below tries to bind a different workflow to each Entitlement Type's "Add Workflow" field. **This does not work in this Amsterdam GA tenant** for createrequest add operations. Saviynt's runtime resolves the Add Access workflow at the **Security System level**, not the entitlement-type level. The `workflow` field on the entitlement type (with the `enableEntitlementToRoleSync` JSON wrapper) is consulted for role-sync, not for Add Access requests.
+>
+> **What actually works (verified end-to-end against tenant):**
+> 1. **One workflow** at the Security System level (`accessAddWorkflow` field on SS), named e.g. `WF-PulumiPipeline-AddAccess`.
+> 2. **Workflow Type = Parallel** (mandatory — Serial workflows can't see the `entitlement` object, so If-Else conditions on entitlement type fail at runtime).
+> 3. **If-Else inside the workflow** branches on entitlement type:
+>    - Condition (Groovy): `entitlement.entitlementtypekey.entitlementname.equals('EntProd') eq true`
+>    - True branch: Custom Assignment (Username = approver, e.g. `wes-approver`) → Grant Access → End. Wire Rejected Access → End and Escalation → End.
+>    - False branch: Grant Access → End (auto-approves dev requests).
+> 4. **Workflow lifecycle is two-step.** Every edit creates a Composing version. After saving, click **Send For Approval** in the editor, then go to **Admin → Workflow → Workflow Approval** and click Accept. Old versions go Inactive on each new edit; only the latest Active version is what runtime uses.
+> 5. **Approval block (Custom Assignment) requires:** Notification Email Template populated, all three outputs (Approved/Rejected/Escalation) wired to End nodes, and the assigned approver to have a SAV Role (ROLE_END_USER or ROLE_ADMIN).
+>
+> The original "two types, two workflows" content below is preserved for context but should be treated as superseded. Section B.1 (creating the two Entitlement Types) and B.4 (creating the two entitlements) are still correct — only the workflow binding strategy changed.
+>
+> **Goal (corrected):** Stand up the IGA structure that drives the demo's two outcomes — auto-approve for dev and manual-approve for prod — using **two Entitlement Types** under one endpoint and **one SS-level workflow** that branches on the entitlement type via If-Else. Then create the two entitlements as instances under their corresponding types.
 
 ## Prerequisites
 - Section A (`01-application-onboarding.md`) completed
@@ -304,9 +320,9 @@ After both entitlements and workflows exist (and the workflows are bound to thei
 
 > Note: createrequest does **not** include `entitlementType` in the payload — Saviynt resolves the type by entitlement_value lookup. Type only matters on the read side (`getEntDetailsforUsers`, `getEntitlements`).
 
-### ⚠️ createRequest payload shape (Amsterdam GA)
+### ⚠️ createRequest payload shape (Amsterdam GA — VERIFIED)
 
-The Amsterdam payload is **flat-fielded** with `requesttype: "ADD"`:
+The Amsterdam payload uses an **array of entitlement objects**, NOT a flat string. Earlier drafts of this doc were wrong on this — corrected below.
 
 ```bash
 curl -s -X POST "$BASE/createrequest" \
@@ -317,20 +333,30 @@ curl -s -X POST "$BASE/createrequest" \
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
     "securitysystem": "Pulumi-Pipeline-AWS",
-    "entitlement": "EC2Deploy-Prod",
+    "accountname": "wes-dev",
     "comments": "Pipeline run #42 — manual approval test for prod deploy",
-    "requestor": "igaadmin",
-    "checksod": "false"
+    "requestor": "wes-dev",
+    "createaccountifnotexists": "false",
+    "checksod": "false",
+    "entitlement": [
+      {
+        "entitlementtype": "EntProd",
+        "entitlementvalue": "EC2Deploy-Prod",
+        "businessjustification": "Pipeline run #42 — prod deploy"
+      }
+    ]
   }' | jq '.'
 ```
 
 Key fields:
 - `requesttype: "ADD"` — string literal, not `"1"`
 - `username` — the **beneficiary** (who's getting the entitlement)
-- `requestor` — the **submitter** (the broker SA, `igaadmin` for v1)
+- `requestor` — the **submitter**. ⚠️ **MUST equal `username` (beneficiary)** for manual approval workflows to fire. If `requestor != beneficiary` and the type is entitlement (not org/SA/role), Saviynt auto-approves silently and bypasses the workflow's approval block. The broker must pass the beneficiary's username here, not the SA name.
 - `endpoint` + `securitysystem` — both required, both = `Pulumi-Pipeline-AWS`
-- `entitlement` — the entitlement value as a plain string, NOT an array
-- `comments` — captured as business justification on the request
+- `accountname` — required at top level; the user's account on the endpoint (not the entitlement)
+- `createaccountifnotexists` — `"false"` if account exists; `"true"` to auto-create as a fallback
+- `entitlement` — **array of objects**, each with `entitlementtype` and `entitlementvalue` (one word, lowercase). Optional per-entitlement: `businessjustification`, `startdate`, `enddate`
+- `comments` — captured as business justification on the parent request
 - `checksod` — `"false"` for this demo; `"true"` if you've configured an SoD ruleset
 
 ### Capture the request key from the response
@@ -406,23 +432,21 @@ Then the broker can pass `checksod: "true"` in createRequest, and `fetchRequestA
 
 ---
 
-## Common Gotchas — Section B
+## Common Gotchas — Section B (verified against tenant)
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Entitlement Type's **Add Workflow** dropdown is empty when binding | Workflow not Activated/Published, or its category isn't access-add | Activate the workflow; if the dropdown still won't show it, the OOB you cloned wasn't access-add typed — clone a different one |
-| Auto-approve workflow doesn't actually auto-approve | Workflow not activated, or not bound to EntDev's Add Workflow field | Verify activation; verify B.1 binding step is done |
-| Auto-approve fails when requestor = beneficiary | Saviynt OOB restriction | Always submit via `requestor: "igaadmin"` |
-| Entitlement created but not requestable in API | `requestable` field missed on Edit pass | Reopen entitlement → Edit → set Requestable=1 → Save |
-| Workflow on entitlement: "I don't see this field" | There is no per-entitlement Workflow field in Amsterdam — by design | Bind at the **Entitlement Type** level (B.1) |
-| `getEntitlements` returns empty when filtered by endpoint | Wrong endpoint or wrong `entitlementtype` (we now have two — `EntDev` and `EntProd`) | Pick the right type per query |
-| `createrequest` returns 200 with `errorCode != "0"` | Workflow not active, type not bound to a workflow, or entitlement not requestable | Verify chain: workflow active → bound to type → entitlement under that type → entitlement requestable |
-| Manual approval workflow exists but approver doesn't see request | Approver field on Approval block points to wrong user | Edit workflow → Approval block → Approver = `igaadmin` |
-| Prod entitlement auto-approves anyway | Both entitlements ended up under the same type, OR EntProd's Add Workflow was bound to the auto-approve workflow | Verify EntProd → Add Workflow = `WF-EC2Deploy-Prod-ManualApprove`; verify EC2Deploy-Prod's Entitlement Type = `EntProd` |
-| `fetchRequestApprovalDetails` returns empty/error | `userName` doesn't match the approver, or `requestKey` is wrong | The `userName` must be the approver username; for v1 always `igaadmin` |
-| Workflow editor blank canvas after save | Browser cache | Hard refresh (Ctrl+Shift+R) |
-| Workflow won't save / Activate greyed out — If-Else condition rejected | Tenant's Groovy parser doesn't accept literal `true`, OR the `false` branch isn't connected to an End node | Try `1 == 1` / `Boolean.TRUE` / `return true`; connect the false branch. If it still won't save, **abandon the from-scratch path and clone an OOB auto-approval workflow instead** (see B.2 Path A). |
-| Approver doesn't see the request even though they're ROLE_ADMIN | Approval task is assigned to a *different* user; ROLE_ADMIN can view but not approve someone else's task on this tenant | Set the Approval block's approver to the user you'll log in as for the demo (`igaadmin` for v1) |
+| **All entitlement add requests auto-approve regardless of type-level workflow** | SS-level `accessAddWorkflow` overrides type-level bindings. Or type-level bindings simply don't fire for Add Access requests in this tenant. | Use one SS-level workflow with If-Else on entitlement type — see the Architecture Correction at the top of this file. |
+| **Request is auto-discontinued (Comments contain "Request discontinued" + literal `null`)** | Workflow runtime null-pointered. Common causes: (1) `requestor != beneficiary` for entitlement requests triggers a silent admin-on-behalf auto-approve path that fails to assign, (2) workflow Type is Serial not Parallel, (3) approval block Escalation output not wired, (4) Notification Email Template empty, (5) approver user has no SAV Role | Set `requestor: <beneficiary username>` in createrequest. Switch workflow Type to Parallel. Wire Escalation→End. Populate Notification Email Template. Assign ROLE_END_USER to the approver. |
+| **Workflow shows Active but new edits don't take effect** | Forgot the two-step lifecycle: Send For Approval → Accept in Workflow Approval. Each edit creates a Composing version; previous Active version goes Inactive. | After every edit, click Send For Approval → go to Admin → Workflow → Workflow Approval → click Accept. Verify status becomes Active in Workflow List. |
+| Entitlement Type's **Add Workflow** field has no effect | This is by design in Amsterdam GA — the field exists but isn't consulted for Add Access requests. The SS-level `accessAddWorkflow` is what fires. | Don't rely on type-level bindings. Use SS-level workflow with If-Else. |
+| Auto-approve workflow doesn't actually auto-approve | Workflow not Active (still in Composing or Pending Approval), or workflow Type is Serial when an entitlement-object If-Else is used | Verify Active status; switch to Parallel |
+| Entitlement created but not visible in request UI | User has no account on the endpoint — Saviynt UI hides entitlements for endpoints where the user has no account record | Create a stub account via API or UI: `accountname=<username>`, owner=`<username>`, status=Active, then verify via `getAccounts` that `userKey`/`username` populate (account is mapped) |
+| `getEntitlements` returns empty when filtered by endpoint | Wrong endpoint or wrong `entitlementtype`. We have two — `EntDev` and `EntProd`. | Pick the right type per query, OR drop the filter and inspect what's returned |
+| `createrequest` returns 1 with "No Workflow Associated for Add Request" | No `accessAddWorkflow` set on the SS, AND the type-level field isn't being honored either | Set the SS-level Access Add Workflow. The type-level field is essentially decorative for entitlement add. |
+| `fetchRequestApprovalDetails` returns 500 / generic HTML error | Likely missing or misnamed required field in body | `userName` is camelCase. Field must be present and non-empty; setting it to a non-existent user causes server crash |
+| Workflow won't save / Activate — If-Else condition rejected | Groovy parser quirks | Try simpler form: `entitlement.entitlementtypekey.entitlementname == 'EntProd'` instead of `.equals('EntProd') eq true` |
+| Approver doesn't see the request even with ROLE_ADMIN | Approval task assigned to wes-approver but workflow couldn't resolve them due to missing SAV role at the time of assignment | Verify `getUser` shows the SAV role; if not, assign in UI and retry |
 
 ---
 

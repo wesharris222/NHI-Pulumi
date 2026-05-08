@@ -24,10 +24,30 @@ ALL paths come from broker/settings.py constants — never hardcode in client co
 Currently in Phase 1 — Broker. See PROGRESS.md for the checklist.
 
 ## Critical contracts (don't forget)
-- createrequest: requesttype="ADD" (not "1"), flat fields, entitlement is a STRING
-- fetchRequestApprovalDetails: requestKey (camelCase), userName=approver
-- getEntDetailsforUsers: GET with body, returns flat accessDetails[]
-- getPendingRequests: requires SAVUSERNAME header
+- **createrequest**: `requesttype: "ADD"` (string, not `"1"`); `entitlement` is an **ARRAY OF OBJECTS** with `entitlementtype` + `entitlementvalue` keys, NOT a flat string; `accountname` required at top level; `requestor` and `username` (beneficiary) are separate fields
+- **`requestor` MUST equal `username` (beneficiary)** for manual approval to fire — admin-on-behalf-of (`requestor: igaadmin`, `username: wes-dev`) silently auto-approves entitlement requests, skipping the workflow's approval block entirely. The broker passes `requestor: <pipeline-user>`, not the SA name.
+- **fetchRequestApprovalDetails**: `requestKey` (camelCase), `userName` (camelCase) = the workflow's assigned approver, not the requestor
+- **getEntDetailsforUsers**: GET with body, params `endpoint` (not `endpointname`), `entitlementType` (camelCase), `entitlement_value` (snake_case); returns flat `accessDetails[]`
+- **getPendingRequests**: requires `SAVUSERNAME` header set to the approver
+- **getUserRequestableEntitlements does NOT exist** in this tenant's API — use `getEntitlements` (catalog state) + `getAccounts` (user-account mapping) + `getEntDetailsforUsers` (held entitlements) for diagnostics
+
+## Workflow architecture (verified empirically — Amsterdam GA, this tenant)
+- **One workflow at the Security System level** (`accessAddWorkflow` field on SS), NOT per-entitlement-type bindings. The Entitlement Type's `workflow` field with `enableEntitlementToRoleSync` wrapper is for role-sync, not Add Access requests.
+- **Differentiate by entitlement type using If-Else *inside* the SS workflow**: `entitlement.entitlementtypekey.entitlementname.equals('EntProd') eq true`
+- **Workflow Type = Parallel** is mandatory for `entitlement.*` references in If-Else (Serial workflows can't see the entitlement object).
+- **Workflow lifecycle is two-step**: every edit creates a Composing version, must Send For Approval → Accept in Admin → Workflow → Workflow Approval before Active. Old version goes Inactive on each edit.
+- **Approval block must wire all three outputs** (Approved, Rejected, Escalation) and have `Notification Email Template` populated, or the runtime null-pointers and auto-discontinues the request.
+- **Approver user needs a SAV Role** (ROLE_END_USER or ROLE_ADMIN). User existence alone isn't enough.
+- **`Requestable` flag lives only at the Endpoint level** in this tenant. No toggle on Entitlement Type or Entitlement record (despite older Saviynt docs suggesting otherwise).
+- **Beneficiary user must have a stub account on the endpoint** before they can see entitlements in the Saviynt request catalog UI. Account must be mapped (non-empty `userKey`/`username` after creation).
+
+## Disconnected endpoint provisioning
+Pulumi-Pipeline-AWS has no downstream connector. After approval, provisioning tasks remain Open and don't link the entitlement to the user. Three solutions:
+1. **Broker calls `updateTasks` to close the task** after seeing APPROVED (recommended).
+2. Toggle SS `automatedProvisioning: true` (try this — may auto-close on approval).
+3. Manually complete the task in Admin → Tasks (not viable for the demo).
+
+WSRETRY does NOT help disconnected endpoints — it's for retrying *failed* connector calls, of which there are none here.
 
 ## Reference file
 The original validate_secret.py (in conversation history, not in repo) contains

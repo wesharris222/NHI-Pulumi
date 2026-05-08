@@ -1,8 +1,15 @@
 # 03 — Users + Direct Entitlement Assignment
 
-> **Goal:** Create `wes-dev`, then directly assign `EC2Deploy-Dev` so the dev-environment pipeline run finds the entitlement on `/preflight` immediately and skips the request flow entirely.
-
-> **Why direct assignment vs. submitting a request:** The demo's narrative is "wes-dev is an established developer who already has dev access." If we set up `wes-dev` by submitting an access request — even an auto-approved one — there's a transient window where they don't yet hold the entitlement and the broker's first `/preflight` call would create a request instead of returning approved. Direct admin assignment is the clean baseline.
+> ## ⚠️ Verification Notes (2026-05-08, post-tenant testing) — Read These First
+>
+> 1. **`wes-approver` is now MANDATORY, not optional.** The original C.2 marked it optional with the plan to use `igaadmin` as both broker SA and approver. That doesn't work — when `requestor == approver`, Saviynt's auto-approve trap fires for entitlement requests where beneficiary differs, and the workflow's approval block silently never runs. Create `wes-approver` and use them as the workflow approver.
+> 2. **`requestor` MUST equal `username` (beneficiary) in createrequest** for manual approval to fire. The broker passes `requestor: <pipeline-user>` (e.g., `wes-dev`), not the SA name. Authentication still happens with the SA's bearer token; the `requestor` field is just metadata about whose behalf the request represents.
+> 3. **`getUserRequestableEntitlements` does NOT exist** in this tenant's API collection. Diagnostics use `getEntitlements` + `getAccounts` + `getEntDetailsforUsers` instead.
+> 4. **A stub account on the endpoint** is required for the user to see entitlements in the Saviynt request catalog UI. The account must be mapped to the user (non-empty `userKey`/`username` after creation). For our governance-only endpoint, this is purely an internal Saviynt record — no real downstream system.
+> 5. **The createrequest `entitlement` field is an array of objects**, not a flat string. See updated C.4 Path B below.
+> 6. **Provisioning tasks for disconnected endpoints don't auto-complete on approval.** Even with `instantprovision: true` on the SS, you'll need to either (a) have the broker call `updateTasks` to close the task, (b) try `automatedProvisioning: true` on the SS, or (c) manually mark complete in Admin → Tasks. Plan: option (a) for the broker design.
+>
+> **Goal:** Create `wes-dev` (beneficiary), `wes-approver` (manual-approval approver), and stub accounts on the Pulumi-Pipeline-AWS endpoint. Then directly assign `EC2Deploy-Dev` to `wes-dev` so the dev-environment pipeline run finds the entitlement on `/preflight` immediately and skips the request flow entirely. Leave `EC2Deploy-Prod` *un*assigned so the prod path triggers the manual-approval workflow.
 
 ## Prerequisites
 - Section A complete (endpoint exists)
@@ -45,11 +52,24 @@ Saviynt tenants often have org-specific required user attributes (department, lo
 
 ---
 
-## C.2 (Optional) Create wes-approver
+## C.2 Create wes-approver (MANDATORY)
 
-For demo v1, **`igaadmin` is the approver** and you can skip this section. Create `wes-approver` later if you want to demonstrate proper duty separation in a follow-on demo.
+⚠️ **No longer optional.** Saviynt's runtime auto-approves entitlement requests when `requestor == approver` even with a workflow approval block in the canvas — so the approver in the workflow must be a different identity from the broker's SA (`igaadmin`). Without `wes-approver`, the prod-path manual-approval gate doesn't fire and the demo's governance proof point is lost.
 
-If you create them now: same steps as C.1 with `wes-approver` as username, then assign the OOB **End User** SAV role so they can log in and see request queues.
+Same click-by-click as C.1 with these values:
+- **Username**: `wes-approver`
+- **First Name**: `Wes`
+- **Last Name**: `Approver`
+- **Email**: `wes-approver@homelab.local` (or any valid format)
+- **Display Name**: `Wes Approver (Demo Senior Engineer)`
+- **User Type**: `Internal`
+- **Status**: `Active`
+- **Manager**: `igaadmin`
+- **SAV Role**: `ROLE_ADMIN` (verified working). `ROLE_END_USER` should also work but wasn't tested in this iteration.
+
+⚠️ **`getUser` doesn't return SAV role assignments in its response payload** — verify in the UI by reopening the user record and checking the SAV Role section.
+
+The Custom Assignment block in `WF-PulumiPipeline-AddAccess` will reference this user by username when routing the prod-path approval.
 
 ---
 
@@ -77,7 +97,37 @@ curl -s -X POST "$BASE/getUser" \
 
 ## C.4 Direct Assignment of EC2Deploy-Dev to wes-dev
 
-### Click-by-click — Path A (UI, preferred)
+### Prerequisite: stub account on the endpoint (REQUIRED)
+
+⚠️ **`wes-dev` must have an account on `Pulumi-Pipeline-AWS` before any entitlement assignment.** Saviynt grants entitlements to user-account pairs — without an account, the entitlement assignment has nothing to bind to. Also: the user can't see entitlements in the Saviynt request UI until they have an account on the endpoint.
+
+UI path:
+1. Admin → Identity Repository → **Accounts** → **Create Account**.
+2. Fields:
+   - **Account Name**: `wes-dev`
+   - **Display Name**: `wes-dev`
+   - **Endpoint**: `Pulumi-Pipeline-AWS`
+   - **Status**: Active
+   - **Owner / User Mapping**: link to user `wes-dev` (some Amsterdam UIs require a separate "Map to User" action after account creation)
+3. Save.
+
+Verify the account is correctly mapped:
+
+```bash
+curl -s -X POST "$BASE/getAccounts" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "advsearchcriteria": {
+      "endpoint": "Pulumi-Pipeline-AWS",
+      "name": "wes-dev"
+    }
+  }' | jq '.'
+```
+
+The response must show `username: "wes-dev"` and a non-empty `userKey`. If those are blank, the account exists but isn't mapped — fix in UI before proceeding.
+
+### Click-by-click — Path A (UI direct assignment) — may not be available
 
 1. Edit the `wes-dev` user.
 2. Find the **Entitlements** tab (in some Amsterdam UIs: **Access** or **User Access**).
@@ -88,11 +138,13 @@ curl -s -X POST "$BASE/getUser" \
    - **Entitlement Value**: select `EC2Deploy-Dev`
 5. Save.
 
-> If your tenant has direct UI assignment disabled, use Path B.
+⚠️ **Many Amsterdam tenants don't expose an Entitlements tab on the user record at all** — direct admin assignment isn't available. In that case use Path B.
 
-### Click-by-click — Path B (admin-mediated request, no human approver)
+### Click-by-click — Path B (admin-mediated request, auto-approves via SS workflow's False branch) — VERIFIED
 
-Submit an access request **as `igaadmin`** for `wes-dev` for `EC2Deploy-Dev`. The auto-approve workflow handles it instantly.
+Submit an access request as `igaadmin` for `wes-dev` for `EC2Deploy-Dev`. The SS-level workflow's If-Else False branch (Grant Access) handles it instantly because EntDev doesn't match the EntProd condition.
+
+⚠️ Note that for *baseline assignment* it's OK to use `requestor: igaadmin` because EntDev hits the auto-approve branch — the requestor=approver auto-approve trap doesn't matter when there's no human approval step. For the prod-path *demo* run (where manual approval matters), `requestor` must equal the beneficiary.
 
 ```bash
 curl -s -X POST "$BASE/createrequest" \
@@ -103,14 +155,27 @@ curl -s -X POST "$BASE/createrequest" \
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
     "securitysystem": "Pulumi-Pipeline-AWS",
-    "entitlement": "EC2Deploy-Dev",
+    "accountname": "wes-dev",
     "comments": "Baseline assignment for demo - Wes Dev needs dev environment access",
     "requestor": "igaadmin",
-    "checksod": "false"
+    "createaccountifnotexists": "false",
+    "checksod": "false",
+    "entitlement": [
+      {
+        "entitlementtype": "EntDev",
+        "entitlementvalue": "EC2Deploy-Dev",
+        "businessjustification": "Baseline dev access for demo developer"
+      }
+    ]
   }' | jq '.'
 ```
 
-The auto-approve workflow fires and the entitlement is granted within seconds. Verify via C.5.
+The auto-approve branch fires and the entitlement *request* is approved within seconds. **However**, the *provisioning task* will be created in Open state and won't complete automatically (disconnected endpoint). Either:
+
+- Manually complete: Admin → Tasks → find the task → Complete
+- Plan: have the broker call `updateTasks` to close the task after it sees APPROVED status
+
+Verify via C.5.
 
 ---
 
@@ -175,25 +240,43 @@ else:
     return {"status": "pending", "request_key": request_key}
 ```
 
-### Sanity check: getUserRequestableEntitlements
+### Diagnostic chain (replaces deprecated `getUserRequestableEntitlements`)
 
-This shows what `wes-dev` could *request*. With `allowAssignedEntitlement: "true"`, it also shows what they currently hold:
+`getUserRequestableEntitlements` does NOT exist in this tenant's API collection. To diagnose "is this entitlement properly configured and visible to this user," use these three calls in sequence:
+
+**1. Catalog check — does the entitlement exist with the right type/endpoint/status?**
 
 ```bash
-curl -s -X POST "$BASE/getUserRequestableEntitlements" \
+curl -s -X POST "$BASE/getEntitlements" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "username": "wes-dev",
-    "endpointname": "Pulumi-Pipeline-AWS",
-    "entitlementtype": "EntDev",
-    "allowAssignedEntitlement": "true"
+    "endpoint": "Pulumi-Pipeline-AWS",
+    "entitlementtype": "EntDev"
   }' | jq '.'
 ```
 
-> Note: this endpoint uses `endpointname` (not `endpoint`) — the param name differs from `getEntDetailsforUsers`. Run again with `entitlementtype: "EntProd"` to see prod-side requestable entitlements.
+Look for `entitlement_value: "EC2Deploy-Dev"`, `status: "1"`, `entitlementTypeName: "EntDev"`.
 
-You should see `EC2Deploy-Dev` (assigned) and possibly other dev-type entitlements listed.
+**2. Account-mapping check — does the user have a mapped account on the endpoint?**
+
+```bash
+curl -s -X POST "$BASE/getAccounts" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "advsearchcriteria": {
+      "endpoint": "Pulumi-Pipeline-AWS",
+      "name": "wes-dev"
+    }
+  }' | jq '.'
+```
+
+Must return one record with `username: "wes-dev"` and non-empty `userKey`. Empty result or missing `userKey` = fix the account mapping before continuing.
+
+**3. Held entitlements — does the user actually hold this specific entitlement?** (This is what the broker's `/preflight` calls.) See section C.5 above.
+
+If catalog + account mapping are both healthy and the user *should* hold the entitlement but `getEntDetailsforUsers` returns empty, the cause is almost always an open provisioning task that needs manual completion — see "Disconnected endpoint provisioning" note in section C.4.
 
 ---
 
@@ -257,6 +340,8 @@ curl -s -X GET "$BASE/getEntDetailsforUsers" \
 
 Step 2 — broker submits createRequest:
 
+⚠️ **Note `requestor: "wes-dev"` (the beneficiary) is critical** for the prod path. If you submit with `requestor: "igaadmin"`, Saviynt's auto-approve trap fires and the workflow's approval block silently never runs — you'll see APPROVED immediately with `assignee: []`, no manual approval, no demo.
+
 ```bash
 REQ_RESPONSE=$(curl -s -X POST "$BASE/createrequest" \
   -H "Authorization: Bearer $TOKEN" \
@@ -266,17 +351,26 @@ REQ_RESPONSE=$(curl -s -X POST "$BASE/createrequest" \
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
     "securitysystem": "Pulumi-Pipeline-AWS",
-    "entitlement": "EC2Deploy-Prod",
+    "accountname": "wes-dev",
     "comments": "Pipeline run #demo — prod deploy",
-    "requestor": "igaadmin",
-    "checksod": "false"
+    "requestor": "wes-dev",
+    "createaccountifnotexists": "false",
+    "checksod": "false",
+    "entitlement": [
+      {
+        "entitlementtype": "EntProd",
+        "entitlementvalue": "EC2Deploy-Prod",
+        "businessjustification": "Prod deploy approval gate"
+      }
+    ]
   }')
 echo "$REQ_RESPONSE" | jq '.'
 
-# Capture request key (field name varies — adjust based on actual response)
-REQ_KEY=$(echo "$REQ_RESPONSE" | jq -r '.requestkey // .requestid // empty')
+REQ_KEY=$(echo "$REQ_RESPONSE" | jq -r '.requestkey // empty')
 echo "Request key: $REQ_KEY"
 ```
+
+The response also includes a top-level `RequestId` — that's the parent ARS_Request ID; `requestkey` is the per-entitlement request key the broker uses for polling.
 
 Step 3 — view pending requests as approver (igaadmin):
 
@@ -292,7 +386,7 @@ curl -s -X POST "$BASE/getPendingRequests" \
 
 **Expected:** the request you just submitted appears in the list.
 
-Step 4 — broker polls status (still pending):
+Step 4 — broker polls status (should be PENDING with wes-approver as assignee):
 
 ```bash
 curl -s -X POST "$BASE/fetchRequestApprovalDetails" \
@@ -300,13 +394,23 @@ curl -s -X POST "$BASE/fetchRequestApprovalDetails" \
   -H "Content-Type: application/json" \
   -d "{
     \"requestKey\": \"$REQ_KEY\",
-    \"userName\": \"igaadmin\"
-  }" | jq '.ApprovalRequestDetails.AccessRequestDetails[0].modifyTasks[0].approvalstatus // .ApprovalRequestDetails.AccessRequestDetails[0].tasksList[0].approvalstatus'
+    \"userName\": \"wes-approver\"
+  }" | jq '.ApprovalRequestDetails.AccessRequestDetails[0].modifyTasks[0]'
 ```
 
-**Expected:** `"PENDING"` or similar pre-approved state.
+**Expected (verified):**
+```json
+{
+  "approvalstatus": "NEW",
+  "requestaccessStatus": "Pending Approval",
+  "approvaltype": "Prod-Manual-Approval",
+  "assignee": [["Wes Approver (wes-approver)"]]
+}
+```
 
-Step 5 — log into Saviynt UI as `igaadmin`, find the request, click Approve.
+⚠️ `userName` in this body is the workflow's approver, not the requestor. For our prod workflow that's `wes-approver`.
+
+Step 5 — log into Saviynt UI **as `wes-approver`** (not igaadmin), find the request in the approval inbox, click Approve.
 
 Step 6 — broker polls again (now approved):
 
@@ -354,19 +458,28 @@ For granted entitlements you'd use a `removeAccess` API or the UI; this isn't cr
 
 ---
 
-## Common Gotchas — Section C
+## Common Gotchas — Section C (verified against tenant)
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| **Prod request auto-approves immediately, no PENDING state** | `requestor` ≠ beneficiary in the createrequest payload (the admin-on-behalf trap) | Set `requestor: "wes-dev"` (or whatever the pipeline user is) — must match `username` |
+| **Request immediately discontinued with `null` in Comments** | Workflow runtime null-pointered. Common: workflow Type=Serial when If-Else uses entitlement object; Escalation output unwired; approver lacks SAV role | Switch workflow to Parallel; wire Escalation→End; assign ROLE_END_USER (or ROLE_ADMIN) to approver |
+| **Workflow status shows Active in editor but new edits don't apply** | Each edit creates a Composing version; old version goes Inactive; new version needs Send For Approval → Accept | After every edit: Send For Approval → Admin → Workflow → Workflow Approval → Accept |
+| **"No Workflow Associated for Add Request"** | SS-level `accessAddWorkflow` field is empty or points at a workflow that's no longer Active | Set Security System's Access Add Workflow to a known-Active workflow |
 | Cannot create user: "Manager is required" | Tenant requires manager | Set Manager to `igaadmin` |
 | Cannot create user: "Department/Location required" | Tenant has required custom user attributes | Set placeholder values |
 | User created but `getUser` returns nothing | User in inactive state | Edit user, set Status to Active |
-| Direct entitlement assignment from UI greyed out | Tenant globally disabled direct admin assignment | Use Path B (admin-submitted request with auto-approve) |
-| `getEntDetailsforUsers` returns empty after assignment | Provisioning task created but not yet executed | Run **WSRetry** job from Job Control Panel; OR enable Instant Provisioning at security system level |
+| `getUser` doesn't return SAV role assignments | API quirk in this tenant | Verify SAV role in the UI by reopening the user record |
+| **Entitlement not visible in Saviynt request UI catalog** | User has no account on the endpoint | Create a stub account, verify it's mapped (`getAccounts` shows non-empty `userKey`/`username`) |
+| **getAccounts returns account but `userKey` and `username` are empty** | Account exists but isn't linked to the user record | UI: edit account → Owner = the user; or "Map Account to User" action |
+| `getEntDetailsforUsers` returns empty after a successful approval | Provisioning task created but not closed (disconnected endpoint quirk) | Manually complete in Admin → Tasks. WSRetry doesn't help — it's only for retrying failed connector calls. |
 | `getEntDetailsforUsers` 400 with "username required" | Field name typo (`username` is correct) | Match the API doc exactly |
-| `getPendingRequests` returns empty | Missing `SAVUSERNAME` header, or approver field on workflow points to wrong user | Always include `SAVUSERNAME: igaadmin` header; verify workflow approver |
-| `fetchRequestApprovalDetails` returns empty `ApprovalRequestDetails` | `userName` doesn't match the assigned approver | Always pass `userName: "igaadmin"` (the workflow approver) |
-| Approval clicked but `getEntDetailsforUsers` still empty | Provisioning task pending | Run WSRetry job, or wait for next scheduled provisioning run |
+| `getEntDetailsforUsers` 401 Unauthorized | JWT token expired (1-hour TTL) | Re-run `/ECM/api/login` for a fresh token |
+| `getPendingRequests` returns empty | Missing `SAVUSERNAME` header, or approver field on workflow points to wrong user | Always include `SAVUSERNAME: <approver-username>` header; verify workflow approver |
+| `fetchRequestApprovalDetails` returns empty `ApprovalRequestDetails` | `userName` doesn't match the assigned approver | Pass the approver's username; for the prod workflow that's `wes-approver` |
+| `fetchRequestApprovalDetails` returns 500 / generic HTML error | Required field missing or misspelled in body | `userName` is camelCase. Field must be present and non-null. |
+| **Hibernate `NonUniqueObjectException` on createrequest** | Stale session pinned to your auth token from a previous failed request | Get a fresh login token, clear Postman cookies, retry |
+| **Validation Logs on the workflow Version tab** | Hidden source of actual runtime errors | Admin → Workflows → open workflow → Version tab → look at Validation Logs column |
 
 ---
 
@@ -436,4 +549,13 @@ PAM_CHECKOUT_TTL_MIN      = 30
 
 ## What's next
 
-IGA configuration is complete. The broker can now run the full IGA flow against your tenant. The next phase configures PAM endpoints for AWS IAM checkout and EC2 NHI registration — separate prompt for Tests 3-6.
+IGA configuration is complete and **verified end-to-end against the tenant** (2026-05-08). Both demo paths confirmed working:
+
+- ✅ Dev path: `createrequest` → SS workflow's If-Else False branch → Grant Access → entitlement assigned (after manual task close)
+- ✅ Prod path: `createrequest` (`requestor: wes-dev`) → If-Else True branch → Custom Assignment routes to `wes-approver` → PENDING with assignee → UI approval → APPROVED → entitlement assigned (after manual task close)
+
+The broker can now run the full IGA flow against the tenant. Next phases:
+
+1. **Auto-completion of provisioning tasks** — current state: manual click in Admin → Tasks. Plan: broker calls `updateTasks` API to close tasks itself after detecting APPROVED. Optional optimization: try toggling `automatedProvisioning: true` on the SS to see if Saviynt can do it natively.
+2. **Phase 5 — PAM configuration** — separate doc, not yet written. Configures the AWS IAM checkout endpoint and the NHI registration endpoint.
+3. **Phase 1 — Broker implementation** — wraps the verified API calls (with the corrected payload shapes) behind five HMAC-authenticated FastAPI endpoints.

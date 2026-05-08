@@ -74,14 +74,14 @@ This workflow auto-approves any request without human intervention.
 
 1. **Admin** → **Workflows**. Find the stock auto-approve workflow. Likely names: `AutoApproveWorkflow`, `AutoApprove`, or `SimpleAutoApproval`.
 2. **Verify before cloning** — open it and confirm:
-   - **Workflow Type**: `AccessAddWorkflow` (or generic enough to bind to entitlement requests). Wrong type → the bind in B.4 will fail.
    - **Status**: Active / Published.
    - The flow actually auto-approves end-to-end (some OOB "Auto*" workflows auto-*route*, not auto-*approve* — don't trust the name; trace the canvas).
+   - The internal *category* matches access-add (API name `AccessAddWorkflow`). Amsterdam UIs may not expose this directly; if the OOB workflow appears in another entitlement's Workflow dropdown anywhere in the tenant, that confirms the category is right. If you can't tell, clone it anyway and just check that your clone shows up in the Workflow dropdown when you bind it in B.4.
 3. Use the **Clone** / **Copy** action (right-click or Actions menu).
 4. On the clone, set:
    - **Name**: `WF-DeployEC2-Dev-AutoApprove`
    - **Description**: `Auto-approve workflow for EC2Deploy-Dev entitlement (cloned from <OOB name>)`
-   - **Workflow Type**: confirm `AccessAddWorkflow`
+   - **Workflow Type** (execution model): `Parallel` or `Serial`. With a single approver (or auto-approve, no approver) both behave identically — pick either. The clone inherits the OOB original's *category* (`AccessAddWorkflow` in API terms), which is what makes it eligible to be bound to an entitlement.
 5. **Save**.
 6. **Activate** / **Publish** the clone. ⚠️ critical — without activation, the workflow exists but won't fire when bound.
 
@@ -95,8 +95,9 @@ Use this only if no suitable OOB workflow exists, or cloning isn't permitted on 
 2. **Actions** → **Create Workflow**.
 3. Fill in:
    - **Name**: `WF-DeployEC2-Dev-AutoApprove`
-   - **Workflow Type**: `AccessAddWorkflow`
+   - **Workflow Type** (execution model): `Parallel` or `Serial` — irrelevant for an auto-approve flow with no human step. Pick `Parallel`.
    - **Description**: `Auto-approve workflow for EC2Deploy-Dev entitlement`
+   - If your form exposes a **Workflow Category** (or **Used For** / **Module** / **Object Type**), set it to the access-add option (API name `AccessAddWorkflow`). If no such field is visible, the category is auto-set or hidden in your build — that's fine.
 4. **Save** to create the empty workflow shell, then enter the **Workflow Editor**.
 5. Build the flow using the **If-Else with `true` condition** pattern:
 
@@ -147,14 +148,14 @@ When a request hits an Approval block, Saviynt creates an approval task **assign
 
 1. **Admin** → **Workflows**. Find a stock single-step approval workflow. Likely names: `SingleApproval`, `OneStepApproval`, `ManagerApproval` (the last one routes to the requestor's manager — fine to clone, just change the approver field).
 2. Verify on the OOB original:
-   - **Workflow Type**: `AccessAddWorkflow`
    - **Status**: Active / Published
    - Single Approval block, single End — no extra escalation/notification logic that'd surprise the demo.
+   - Same category caveat as B.2 Path A: if the OOB workflow appears in any entitlement's Workflow dropdown today, its access-add category is correct. The Amsterdam UI may not expose category as an editable field.
 3. **Clone** the workflow.
 4. On the clone, set:
    - **Name**: `WF-DeployEC2-Prod-ManualApprove`
    - **Description**: `Manual approval for prod deploys (igaadmin approves in v1, cloned from <OOB name>)`
-   - **Workflow Type**: confirm `AccessAddWorkflow`
+   - **Workflow Type** (execution model): `Parallel` or `Serial`. With a single approver (or auto-approve, no approver) both behave identically — pick either. The clone inherits the OOB original's *category* (`AccessAddWorkflow` in API terms), which is what makes it eligible to be bound to an entitlement.
 5. Open the Approval block and set:
    - **Approver Type**: `User`
    - **Approver**: `igaadmin`  ← critical, see warning above
@@ -168,8 +169,9 @@ When a request hits an Approval block, Saviynt creates an approval task **assign
 1. **Admin** → **Workflows** → **Actions** → **Create Workflow**.
 2. Fill in:
    - **Name**: `WF-DeployEC2-Prod-ManualApprove`
-   - **Workflow Type**: `AccessAddWorkflow`
+   - **Workflow Type** (execution model): `Serial` (with a single approver it's identical to Parallel; Serial is the safer default if you ever add a second approver).
    - **Description**: `Manual approval for prod deploys (igaadmin approves in v1)`
+   - **Workflow Category** / **Used For** (if exposed): access-add (API name `AccessAddWorkflow`). If no such field appears on the form, skip — it's hidden or auto-set in your build.
 3. **Save**, enter editor.
 4. Build the flow:
    - **Start** node

@@ -1,5 +1,13 @@
 # Claude Desktop prompt — Phase 4 Saviynt IGA objects
 
+> ⚠️ **Historical** — this prompt was used to generate the original
+> `saviynt-config/01–03` markdown. The actual structure landed differently
+> after live-tenant testing on Amsterdam GA: there are now **two Entitlement
+> Types** (`EntDev`, `EntProd`) under one endpoint, with workflows bound at
+> the type level (Amsterdam has no per-entitlement Workflow field).
+> `saviynt-config/02-entitlements.md` is the authoritative source; this
+> prompt is preserved for context only.
+
 > Paste everything below the line into Claude Desktop. Self-contained — Claude
 > Desktop has no context on this repo, so the prompt explains the goal.
 >

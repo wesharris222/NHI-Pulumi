@@ -91,7 +91,8 @@ class Settings:
     # ----- Saviynt object names this demo expects ----------------------------
     app_name: str
     security_system: str
-    entitlement_type: str
+    entitlement_type_dev: str
+    entitlement_type_prod: str
     ent_deploy_dev: str
     ent_deploy_prod: str
     pam_endpoint_aws: str
@@ -167,7 +168,11 @@ def load_settings() -> Settings:
         # Saviynt object names ----------------------------------------------
         app_name=_env("APP_NAME", "Pulumi-Pipeline-AWS"),
         security_system=_env("SECURITY_SYSTEM", _env("APP_NAME", "Pulumi-Pipeline-AWS")),
-        entitlement_type=_env("ENTITLEMENT_TYPE", "Entitlement"),
+        # Per-env Entitlement Types — dev and prod live under different types so
+        # each can carry its own Add Workflow (auto-approve vs manual). See
+        # saviynt-config/02-entitlements.md §B.1.
+        entitlement_type_dev=_env("ENTITLEMENT_TYPE_DEV", "EntDev"),
+        entitlement_type_prod=_env("ENTITLEMENT_TYPE_PROD", "EntProd"),
         ent_deploy_dev=_env("ENT_DEPLOY_DEV", "EC2Deploy-Dev"),
         ent_deploy_prod=_env("ENT_DEPLOY_PROD", "EC2Deploy-Prod"),
         pam_endpoint_aws=_env("PAM_ENDPOINT_AWS", "AWS-IAM-Endpoint"),

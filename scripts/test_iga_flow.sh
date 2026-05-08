@@ -43,7 +43,9 @@ BASE="${BASE_URL%/}/ECM/api/v5"
 APP="${APP_NAME:-Pulumi-Pipeline-AWS}"
 ENT_DEV="${ENT_DEPLOY_DEV:-EC2Deploy-Dev}"
 ENT_PROD="${ENT_DEPLOY_PROD:-EC2Deploy-Prod}"
-ENT_TYPE="${ENTITLEMENT_TYPE:-Entitlement}"
+# Per-env Entitlement Types (saviynt-config/02-entitlements.md §B.1).
+ENT_TYPE_DEV="${ENTITLEMENT_TYPE_DEV:-EntDev}"
+ENT_TYPE_PROD="${ENTITLEMENT_TYPE_PROD:-EntProd}"
 BENEFICIARY="${DEMO_REQUESTING_USER:-wes-dev}"
 APPROVER="${DEMO_APPROVER:-$USER}"
 REQUESTOR="${DEMO_REQUESTOR:-$USER}"
@@ -82,13 +84,13 @@ get_token() {
 # Returns: 0 if user holds the entitlement, 1 otherwise
 # -----------------------------------------------------------------------------
 check_entitlement() {
-    local token="$1" username="$2" ent="$3"
+    local token="$1" username="$2" ent="$3" ent_type="$4"
     local resp
     resp=$(curl -sS -X GET "$BASE/getEntDetailsforUsers" \
         -H "Authorization: Bearer $token" \
         -H 'Content-Type: application/json' \
         -d "$(jq -nc \
-            --arg u "$username" --arg ep "$APP" --arg et "$ENT_TYPE" --arg ev "$ent" \
+            --arg u "$username" --arg ep "$APP" --arg et "$ent_type" --arg ev "$ent" \
             '{username:$u, endpoint:$ep, entitlementType:$et, entitlement_value:$ev}')")
     local code count
     code=$(echo "$resp" | jq -r '.errorCode // empty')
@@ -178,10 +180,10 @@ case "${1:-full}" in
         info "Login"
         TOKEN=$(get_token); pass "Got bearer token (len=${#TOKEN})"
         info "Check $BENEFICIARY -> $ENT_DEV  (expect held)"
-        check_entitlement "$TOKEN" "$BENEFICIARY" "$ENT_DEV" \
+        check_entitlement "$TOKEN" "$BENEFICIARY" "$ENT_DEV" "$ENT_TYPE_DEV" \
             || fail "$BENEFICIARY should already hold $ENT_DEV (Phase 4 §C.4)"
         info "Check $BENEFICIARY -> $ENT_PROD (expect NOT held)"
-        check_entitlement "$TOKEN" "$BENEFICIARY" "$ENT_PROD" \
+        check_entitlement "$TOKEN" "$BENEFICIARY" "$ENT_PROD" "$ENT_TYPE_PROD" \
             && fail "$BENEFICIARY should NOT yet hold $ENT_PROD"
         pass "checks complete"
         ;;
@@ -212,9 +214,9 @@ case "${1:-full}" in
         TOKEN=$(get_token); pass "Got bearer token"
 
         info "Pre-check: $BENEFICIARY's current entitlements"
-        check_entitlement "$TOKEN" "$BENEFICIARY" "$ENT_DEV" \
+        check_entitlement "$TOKEN" "$BENEFICIARY" "$ENT_DEV" "$ENT_TYPE_DEV" \
             || fail "$BENEFICIARY should already hold $ENT_DEV"
-        check_entitlement "$TOKEN" "$BENEFICIARY" "$ENT_PROD" \
+        check_entitlement "$TOKEN" "$BENEFICIARY" "$ENT_PROD" "$ENT_TYPE_PROD" \
             && fail "$BENEFICIARY should NOT yet hold $ENT_PROD — reset state first"
 
         info "Submit prod request"
@@ -236,7 +238,7 @@ case "${1:-full}" in
         pass "status=$S2"
 
         info "Verify entitlement now visible on user"
-        check_entitlement "$TOKEN" "$BENEFICIARY" "$ENT_PROD" \
+        check_entitlement "$TOKEN" "$BENEFICIARY" "$ENT_PROD" "$ENT_TYPE_PROD" \
             || info "Entitlement not yet visible — provisioning task may be queued; run WSRetry job in Saviynt"
 
         echo

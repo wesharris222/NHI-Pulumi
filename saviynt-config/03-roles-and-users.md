@@ -84,7 +84,7 @@ curl -s -X POST "$BASE/getUser" \
 3. **Actions** → **Add Entitlement** (or **Assign Entitlement**).
 4. In the picker:
    - **Endpoint**: `Pulumi-Pipeline-AWS`
-   - **Entitlement Type**: `Entitlement`
+   - **Entitlement Type**: `EntDev`
    - **Entitlement Value**: select `EC2Deploy-Dev`
 5. Save.
 
@@ -129,7 +129,7 @@ curl -s -X GET "$BASE/getEntDetailsforUsers" \
   -d '{
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
-    "entitlementType": "Entitlement",
+    "entitlementType": "EntDev",
     "entitlement_value": "EC2Deploy-Dev"
   }' | jq '.'
 ```
@@ -144,7 +144,7 @@ curl -s -X GET "$BASE/getEntDetailsforUsers" \
     {
       "username": "wes-dev",
       "endpointname": "Pulumi-Pipeline-AWS",
-      "entitlementType": "Entitlement",
+      "entitlementType": "EntDev",
       "entitlement_value": "EC2Deploy-Dev",
       "entstatus": 1,
       ...
@@ -164,7 +164,7 @@ The broker's `/preflight` evaluates the response simply:
 response = call_get_ent_details_for_users(
     username=requesting_user,
     endpoint=APP_NAME,
-    entitlementType=ENTITLEMENT_TYPE,
+    entitlementType=ENTITLEMENT_TYPE_DEV if target_env == "dev" else ENTITLEMENT_TYPE_PROD,
     entitlement_value=ent_value,
 )
 if response.get("errorCode") == "0" and len(response.get("accessDetails", [])) > 0:
@@ -186,14 +186,14 @@ curl -s -X POST "$BASE/getUserRequestableEntitlements" \
   -d '{
     "username": "wes-dev",
     "endpointname": "Pulumi-Pipeline-AWS",
-    "entitlementtype": "Entitlement",
+    "entitlementtype": "EntDev",
     "allowAssignedEntitlement": "true"
   }' | jq '.'
 ```
 
-> Note: this endpoint uses `endpointname` (not `endpoint`) — the param name differs from `getEntDetailsforUsers`.
+> Note: this endpoint uses `endpointname` (not `endpoint`) — the param name differs from `getEntDetailsforUsers`. Run again with `entitlementtype: "EntProd"` to see prod-side requestable entitlements.
 
-You should see both entitlements listed.
+You should see `EC2Deploy-Dev` (assigned) and possibly other dev-type entitlements listed.
 
 ---
 
@@ -208,7 +208,7 @@ curl -s -X GET "$BASE/getEntDetailsforUsers" \
   -d '{
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
-    "entitlementType": "Entitlement",
+    "entitlementType": "EntProd",
     "entitlement_value": "EC2Deploy-Prod"
   }' | jq '.'
 ```
@@ -232,7 +232,7 @@ curl -s -X GET "$BASE/getEntDetailsforUsers" \
   -d '{
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
-    "entitlementType": "Entitlement",
+    "entitlementType": "EntDev",
     "entitlement_value": "EC2Deploy-Dev"
   }' | jq '.accessDetails | length'
 ```
@@ -250,7 +250,7 @@ curl -s -X GET "$BASE/getEntDetailsforUsers" \
   -d '{
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
-    "entitlementType": "Entitlement",
+    "entitlementType": "EntProd",
     "entitlement_value": "EC2Deploy-Prod"
   }' | jq '.accessDetails | length'
 ```
@@ -324,7 +324,7 @@ curl -s -X GET "$BASE/getEntDetailsforUsers" \
   -d '{
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
-    "entitlementType": "Entitlement",
+    "entitlementType": "EntProd",
     "entitlement_value": "EC2Deploy-Prod"
   }' | jq '.accessDetails | length'
 ```
@@ -408,7 +408,8 @@ PATH_CANCEL_PENDING_REQUEST = "/ECM/api/v5/cancelPendingRequest"        # POST (
 APP_NAME                  = "Pulumi-Pipeline-AWS"   # security system + endpoint name
 ENT_DEPLOY_DEV            = "EC2Deploy-Dev"
 ENT_DEPLOY_PROD           = "EC2Deploy-Prod"
-ENTITLEMENT_TYPE          = "Entitlement"
+ENTITLEMENT_TYPE_DEV      = "EntDev"
+ENTITLEMENT_TYPE_PROD     = "EntProd"
 
 # ============================================================================
 # Bootstrap identity (the broker SA AND the prod approver — same identity in v1)

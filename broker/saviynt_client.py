@@ -255,15 +255,21 @@ class SaviyntClient:
         )
 
     # ------------------------------------------------------------------ entitlement
-    def user_has_entitlement(self, username: str, entitlement_name: str) -> bool:
+    def user_has_entitlement(
+        self, username: str, entitlement_name: str, entitlement_type: str
+    ) -> bool:
         """
         True iff the user currently holds the entitlement on the configured
-        endpoint.
+        endpoint, scoped to a specific Entitlement Type.
 
         Calls getEntDetailsforUsers (Amsterdam GA). The endpoint is HTTP GET
         but accepts a JSON body — Saviynt convention. The response is a
         flat `accessDetails[]` list; one or more matching records means the
         user holds the entitlement.
+
+        `entitlement_type` is required because dev and prod entitlements live
+        under different types (`EntDev` and `EntProd`) so each can carry its
+        own Add Workflow. See saviynt-config/02-entitlements.md §B.1.
 
         Verified contract: saviynt-config/03-roles-and-users.md §C.5.
         """
@@ -272,7 +278,7 @@ class SaviyntClient:
         payload = {
             "username": username,
             "endpoint": s.app_name,
-            "entitlementType": s.entitlement_type,
+            "entitlementType": entitlement_type,
             "entitlement_value": entitlement_name,
         }
         resp = self._request(

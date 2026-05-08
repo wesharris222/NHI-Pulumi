@@ -13,7 +13,8 @@
 - Bootstrap identity: igaadmin (broker SA AND prod approver in v1)
 - Beneficiary user: wes-dev
 - Application: Pulumi-Pipeline-AWS (Security System + Endpoint, same name)
-- Entitlements: EC2Deploy-Dev (auto-approve), EC2Deploy-Prod (manual)
+- Entitlement Types: `EntDev` (display `Pipeline Access - Dev`, Add Workflow `WF-EC2Deploy-Dev-AutoApprove`) and `EntProd` (display `Pipeline Access - Prod`, Add Workflow `WF-EC2Deploy-Prod-ManualApprove`). Amsterdam binds workflows at the type level, not the entitlement level.
+- Entitlements: EC2Deploy-Dev (under EntDev, auto-approve), EC2Deploy-Prod (under EntProd, manual)
 
 ## Verified API endpoints — Amsterdam GA
 The saviynt-config/03-roles-and-users.md file has the full settings.py block.

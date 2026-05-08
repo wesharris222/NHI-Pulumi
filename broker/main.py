@@ -50,6 +50,14 @@ def _entitlement_for_env(target_env: str) -> str:
     return settings.ent_deploy_dev if target_env == "dev" else settings.ent_deploy_prod
 
 
+def _entitlement_type_for_env(target_env: str) -> str:
+    return (
+        settings.entitlement_type_dev
+        if target_env == "dev"
+        else settings.entitlement_type_prod
+    )
+
+
 def _safe_account_name(prefix: str, instance_id: str, env: str) -> str:
     suffix = re.sub(r"[^A-Za-z0-9-]+", "-", instance_id).strip("-")
     return f"{prefix}-{env}-{suffix}"
@@ -89,14 +97,16 @@ def healthz() -> dict[str, str]:
 )
 def preflight(req: PreflightRequest) -> PreflightResponse:
     entitlement = _entitlement_for_env(req.target_env)
+    ent_type = _entitlement_type_for_env(req.target_env)
     log.info(
-        "preflight: user=%s env=%s entitlement=%s",
+        "preflight: user=%s env=%s entitlement=%s type=%s",
         req.requesting_user,
         req.target_env,
         entitlement,
+        ent_type,
     )
 
-    has_it = _saviynt.user_has_entitlement(req.requesting_user, entitlement)
+    has_it = _saviynt.user_has_entitlement(req.requesting_user, entitlement, ent_type)
     if has_it:
         return PreflightResponse(
             status="ok",
@@ -140,7 +150,8 @@ def preflight_status(request_id: str) -> PreflightStatusResponse:
 )
 def checkout_aws(req: CheckoutAwsRequest) -> CheckoutAwsResponse:
     entitlement = _entitlement_for_env(req.target_env)
-    if not _saviynt.user_has_entitlement(req.requesting_user, entitlement):
+    ent_type = _entitlement_type_for_env(req.target_env)
+    if not _saviynt.user_has_entitlement(req.requesting_user, entitlement, ent_type):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(

@@ -50,7 +50,11 @@ PATH_CANCEL_PENDING_REQUEST     = "/ECM/api/v5/cancelPendingRequest"          # 
 APP_NAME                        = "Pulumi-Pipeline-AWS"
 ENT_DEPLOY_DEV                  = "EC2Deploy-Dev"
 ENT_DEPLOY_PROD                 = "EC2Deploy-Prod"
-ENTITLEMENT_TYPE                = "Entitlement"
+# Per-env Entitlement Types — dev and prod live under different types so each
+# carries its own Add Workflow (auto vs manual). Amsterdam doesn't expose a
+# per-entitlement Workflow field. See saviynt-config/02-entitlements.md §B.1.
+ENTITLEMENT_TYPE_DEV            = "EntDev"
+ENTITLEMENT_TYPE_PROD           = "EntProd"
 
 # Bootstrap identity (broker SA AND prod approver — same identity for v1)
 SAVIYNT_USERNAME                = "igaadmin"
@@ -106,12 +110,12 @@ Response will contain a request key — capture as either `requestkey` or `reque
 ### 3. Preflight uses getEntDetailsforUsers, NOT getUserAccessAttributes or getUser
 
 - Path: `GET /ECM/api/v5/getEntDetailsforUsers` (GET method, JSON body — Saviynt convention)
-- Payload:
+- Payload (entitlementType is per-env: `EntDev` for dev calls, `EntProd` for prod calls):
   ```json
   {
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
-    "entitlementType": "Entitlement",
+    "entitlementType": "EntDev",
     "entitlement_value": "EC2Deploy-Dev"
   }
   ```
@@ -152,7 +156,7 @@ NOT a direct entitlementvalue field:
 ```json
 {
   "endpoint": "Pulumi-Pipeline-AWS",
-  "entitlementtype": "Entitlement",
+  "entitlementtype": "EntProd",
   "entQuery": "ent.entitlement_value = 'EC2Deploy-Prod'"
 }
 ```

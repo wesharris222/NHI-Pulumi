@@ -57,7 +57,28 @@ If the type name you used differs from `Entitlement`, set `ENTITLEMENT_TYPE` in 
 
 This workflow auto-approves any request without human intervention.
 
-### Click-by-click
+> **Recommended path: clone an OOB auto-approval workflow.** Saviynt ships an auto-approve workflow stock (`AutoApproveWorkflow` / `AutoApprove` / `SimpleAutoApproval` depending on build). Cloning it skips the workflow editor's expression-language minefield entirely. The from-scratch If-Else build is documented further down as a fallback.
+
+### Path A — Clone an OOB auto-approval (recommended)
+
+1. **Admin** → **Workflows**. Find the stock auto-approve workflow. Likely names: `AutoApproveWorkflow`, `AutoApprove`, or `SimpleAutoApproval`.
+2. **Verify before cloning** — open it and confirm:
+   - **Workflow Type**: `AccessAddWorkflow` (or generic enough to bind to entitlement requests). Wrong type → the bind in B.4 will fail.
+   - **Status**: Active / Published.
+   - The flow actually auto-approves end-to-end (some OOB "Auto*" workflows auto-*route*, not auto-*approve* — don't trust the name; trace the canvas).
+3. Use the **Clone** / **Copy** action (right-click or Actions menu).
+4. On the clone, set:
+   - **Name**: `WF-DeployEC2-Dev-AutoApprove`
+   - **Description**: `Auto-approve workflow for Deploy-EC2-Dev entitlement (cloned from <OOB name>)`
+   - **Workflow Type**: confirm `AccessAddWorkflow`
+5. **Save**.
+6. **Activate** / **Publish** the clone. ⚠️ critical — without activation, the workflow exists but won't fire when bound.
+
+**Don't edit the OOB original in place.** It's often wired into other tenant defaults (the global access-request page, etc.); modifying it has side effects.
+
+### Path B — Build from scratch (fallback)
+
+Use this only if no suitable OOB workflow exists, or cloning isn't permitted on your tenant.
 
 1. Navigate to **Admin** → **Workflows**.
 2. **Actions** → **Create Workflow**.
@@ -66,21 +87,25 @@ This workflow auto-approves any request without human intervention.
    - **Workflow Type**: `AccessAddWorkflow`
    - **Description**: `Auto-approve workflow for Deploy-EC2-Dev entitlement`
 4. **Save** to create the empty workflow shell, then enter the **Workflow Editor**.
-5. Build the flow using the **If-Else with `true` condition** pattern (recommended — works on every release and is visually obvious in the editor):
+5. Build the flow using the **If-Else with `true` condition** pattern:
 
-```
-Start → If-Else (condition: true) → Auto-Approve End
-                                  → (false branch never taken)
-```
+   ```
+   Start → If-Else (condition: true) → Auto-Approve End
+                                     → (false branch → End)
+   ```
 
-In the If-Else block, set the condition expression to:
+   In the If-Else block, set the condition:
 
-```groovy
-true
-```
+   - **Expression Language** dropdown → if a `Static` / `Constant` / `Boolean` option is offered, **pick that** — it converts the field to a true/false toggle and bypasses the parser entirely. Otherwise pick `Groovy` (or `GroovyScript`).
+   - **Expression** body → type the single word below, nothing else. **Do not include backticks or the word `groovy`** — those are markdown formatting in this doc, not part of the expression:
+
+         true
+
+   - If `true` alone is rejected by the parser, fall back in order: `1 == 1`, `Boolean.TRUE`, `return true`. All evaluate to true and parse unambiguously as Groovy.
+   - Both branches (true *and* false) must terminate at an **End** node, even though the false branch is never taken. An unconnected branch is the most common reason Activate stays greyed out.
 
 6. **Save**.
-7. **Activate** / **Publish** the workflow. ⚠️ critical — without activation, the workflow exists but won't fire when bound to an entitlement.
+7. **Activate** / **Publish** the workflow.
 
 ### ⚠️ Gotcha: requestor = beneficiary auto-approve restriction
 
@@ -99,7 +124,35 @@ These are different user identities (or auto-approve, which doesn't count as a p
 
 For demo v1, the approver is `igaadmin` (ROLE_ADMIN). This is a deliberate simplification — in a production design you'd separate request submission and approval into distinct identities.
 
-### Click-by-click
+> **Recommended path: clone an OOB single-step approval workflow** and change the approver to `igaadmin`. Same reasoning as B.2 — skip the editor where you can.
+
+### ⚠️ Why the approver field actually matters (don't skip it)
+
+When a request hits an Approval block, Saviynt creates an approval task **assigned to the named user**. The task lands in **that user's** approval inbox. ROLE_ADMIN can usually *view* any pending approval via admin pages, but whether ROLE_ADMIN can *approve* a task assigned to a different user depends on tenant config — some tenants enforce strict assignment.
+
+**Demo-safe rule:** the Approval block's approver must be the same user you'll log in as during the demo (`igaadmin` for v1). Then the task lands in that user's inbox and "approve" is one click — no admin override or task reassignment needed.
+
+### Path A — Clone an OOB single-approval workflow (recommended)
+
+1. **Admin** → **Workflows**. Find a stock single-step approval workflow. Likely names: `SingleApproval`, `OneStepApproval`, `ManagerApproval` (the last one routes to the requestor's manager — fine to clone, just change the approver field).
+2. Verify on the OOB original:
+   - **Workflow Type**: `AccessAddWorkflow`
+   - **Status**: Active / Published
+   - Single Approval block, single End — no extra escalation/notification logic that'd surprise the demo.
+3. **Clone** the workflow.
+4. On the clone, set:
+   - **Name**: `WF-DeployEC2-Prod-ManualApprove`
+   - **Description**: `Manual approval for prod deploys (igaadmin approves in v1, cloned from <OOB name>)`
+   - **Workflow Type**: confirm `AccessAddWorkflow`
+5. Open the Approval block and set:
+   - **Approver Type**: `User`
+   - **Approver**: `igaadmin`  ← critical, see warning above
+   - **Rank**: `1`
+   - **Escalation**: leave blank
+   - **Approval Comments Required**: ON for richer demo audit
+6. **Save** and **Activate**.
+
+### Path B — Build from scratch (fallback)
 
 1. **Admin** → **Workflows** → **Actions** → **Create Workflow**.
 2. Fill in:
@@ -111,15 +164,8 @@ For demo v1, the approver is `igaadmin` (ROLE_ADMIN). This is a deliberate simpl
    - **Start** node
    - **Approval** block (single)
    - **End** node
-5. Configure the Approval block:
-   - **Approver Type**: `User`
-   - **Approver**: `igaadmin`
-   - **Rank 1**: `1`
-   - **Escalation**: leave blank
-   - **Notification Template**: select OOB **Default Approval Notification** if available
-   - **Approval Comments Required**: ON for richer demo audit
-6. **Save**.
-7. **Activate** the workflow.
+5. Configure the Approval block (same fields as Path A step 5).
+6. **Save** and **Activate**.
 
 ### ⚠️ Demo-narrative note
 
@@ -310,6 +356,8 @@ Then the broker can pass `checksod: "true"` in createRequest, and `fetchRequestA
 | Prod entitlement workflow auto-approves anyway | Wrong workflow attached | Edit entitlement → Workflow field → confirm `WF-DeployEC2-Prod-ManualApprove`, save |
 | `fetchRequestApprovalDetails` returns empty/error | `userName` doesn't match the approver, or `requestKey` is wrong | The `userName` must be the approver username; for v1 always `igaadmin` |
 | Workflow editor blank canvas after save | Browser cache | Hard refresh (Ctrl+Shift+R) |
+| Workflow won't save / Activate greyed out — If-Else condition rejected | Tenant's Groovy parser doesn't accept literal `true`, OR the `false` branch isn't connected to an End node | Try `1 == 1` / `Boolean.TRUE` / `return true`; connect the false branch. If it still won't save, **abandon the from-scratch path and clone an OOB auto-approval workflow instead** (see B.2 Path A). |
+| Approver doesn't see the request even though they're ROLE_ADMIN | Approval task is assigned to a *different* user; ROLE_ADMIN can view but not approve someone else's task on this tenant | Set the Approval block's approver to the user you'll log in as for the demo (`igaadmin` for v1) |
 
 ---
 

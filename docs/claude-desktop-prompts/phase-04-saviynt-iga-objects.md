@@ -14,8 +14,8 @@ I'm building a Saviynt + Pulumi DevOps demo. A FastAPI broker authenticates to m
 
 **Demo flow I need to support**:
 
-1. Developer `wes-dev` triggers a pipeline targeting `dev`. Broker calls Saviynt: "does `wes-dev` hold the entitlement `Deploy-EC2-Dev`?" → yes → pipeline proceeds.
-2. Developer `wes-dev` triggers the same pipeline targeting `prod`. Broker calls Saviynt: "does `wes-dev` hold `Deploy-EC2-Prod`?" → no → broker submits an access request via `/ECM/api/v5/createrequest` → pipeline pauses, polls for status.
+1. Developer `wes-dev` triggers a pipeline targeting `dev`. Broker calls Saviynt: "does `wes-dev` hold the entitlement `EC2Deploy-Dev`?" → yes → pipeline proceeds.
+2. Developer `wes-dev` triggers the same pipeline targeting `prod`. Broker calls Saviynt: "does `wes-dev` hold `EC2Deploy-Prod`?" → no → broker submits an access request via `/ECM/api/v5/createrequest` → pipeline pauses, polls for status.
 3. Approver `wes-approver` sees the request in the Saviynt UI and clicks Approve.
 4. Pipeline polling sees the approved status, resumes, deploys.
 
@@ -37,8 +37,8 @@ Both attached to the `Pulumi-Pipeline-AWS` endpoint:
 
 | Entitlement value | Type | Approval | Description |
 |---|---|---|---|
-| `Deploy-EC2-Dev` | `Entitlement` | Auto-approve | Permission to run the pipeline against the dev environment |
-| `Deploy-EC2-Prod` | `Entitlement` | Manual approve via `wes-approver` | Permission to run the pipeline against prod |
+| `EC2Deploy-Dev` | `Entitlement` | Auto-approve | Permission to run the pipeline against the dev environment |
+| `EC2Deploy-Prod` | `Entitlement` | Manual approve via `wes-approver` | Permission to run the pipeline against prod |
 
 Steps I need:
 - Create the entitlement type if `Entitlement` doesn't exist on this endpoint (or tell me what type to use instead and I'll override `ENTITLEMENT_TYPE` in the broker config)
@@ -47,8 +47,8 @@ Steps I need:
 
 ## 3. Approval workflows
 
-- A workflow that **auto-approves** any request for `Deploy-EC2-Dev` (no human intervention; useful so a fresh user gets dev access without delay during the demo)
-- A workflow that **routes to `wes-approver`** for any request for `Deploy-EC2-Prod`, with notification, with the request showing requestor + business justification + SoD check result
+- A workflow that **auto-approves** any request for `EC2Deploy-Dev` (no human intervention; useful so a fresh user gets dev access without delay during the demo)
+- A workflow that **routes to `wes-approver`** for any request for `EC2Deploy-Prod`, with notification, with the request showing requestor + business justification + SoD check result
 
 Steps I need:
 - How to create each workflow object
@@ -59,13 +59,13 @@ Steps I need:
 
 | Username | Role | What they hold |
 |---|---|---|
-| `wes-dev` | Developer (a normal end user, no admin) | Assigned `Deploy-EC2-Dev` directly so `/preflight dev` returns `ok` immediately. Does NOT hold `Deploy-EC2-Prod`. |
+| `wes-dev` | Developer (a normal end user, no admin) | Assigned `EC2Deploy-Dev` directly so `/preflight dev` returns `ok` immediately. Does NOT hold `EC2Deploy-Prod`. |
 | `wes-approver` | Approver | Member of whatever Saviynt construct routes the prod approval to them. Does not need to hold the entitlement themselves. |
 
 Steps I need:
 - Create both users with email + temporary password
-- Assign `Deploy-EC2-Dev` to `wes-dev` directly (not via request — direct admin assignment, since this is the demo's "already-onboarded developer" baseline)
-- Make `wes-approver` the designated approver in the Deploy-EC2-Prod workflow
+- Assign `EC2Deploy-Dev` to `wes-dev` directly (not via request — direct admin assignment, since this is the demo's "already-onboarded developer" baseline)
+- Make `wes-approver` the designated approver in the EC2Deploy-Prod workflow
 
 ## 5. Verification
 
@@ -73,7 +73,7 @@ After each major step, give me an API verification I can run from the broker hos
 
 - After Security System + Endpoint: `POST /ECM/api/v5/getEndpoints` filtered by name returns the endpoint
 - After Entitlements: `POST /ECM/api/v5/getEntitlements` filtered by entitlement_value returns each one
-- After user assignment: `POST /ECM/api/v5/getUser` for `wes-dev` with `responsefields:["username","entitlements"]` shows `Deploy-EC2-Dev` in the entitlements list
+- After user assignment: `POST /ECM/api/v5/getUser` for `wes-dev` with `responsefields:["username","entitlements"]` shows `EC2Deploy-Dev` in the entitlements list
 
 If the API call shape differs by Amsterdam release, give me the right one.
 

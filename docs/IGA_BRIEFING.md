@@ -48,8 +48,8 @@ PATH_CANCEL_PENDING_REQUEST     = "/ECM/api/v5/cancelPendingRequest"          # 
 
 # Object names
 APP_NAME                        = "Pulumi-Pipeline-AWS"
-ENT_DEPLOY_DEV                  = "Deploy-EC2-Dev"
-ENT_DEPLOY_PROD                 = "Deploy-EC2-Prod"
+ENT_DEPLOY_DEV                  = "EC2Deploy-Dev"
+ENT_DEPLOY_PROD                 = "EC2Deploy-Prod"
 ENTITLEMENT_TYPE                = "Entitlement"
 
 # Bootstrap identity (broker SA AND prod approver — same identity for v1)
@@ -72,7 +72,7 @@ DEMO_REQUESTING_USER            = "wes-dev"
   "username": "wes-dev",
   "endpoint": "Pulumi-Pipeline-AWS",
   "securitysystem": "Pulumi-Pipeline-AWS",
-  "entitlement": "Deploy-EC2-Prod",
+  "entitlement": "EC2Deploy-Prod",
   "comments": "Pipeline run #X — justification",
   "requestor": "igaadmin",
   "checksod": "false"
@@ -112,7 +112,7 @@ Response will contain a request key — capture as either `requestkey` or `reque
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
     "entitlementType": "Entitlement",
-    "entitlement_value": "Deploy-EC2-Dev"
+    "entitlement_value": "EC2Deploy-Dev"
   }
   ```
 - Response: `response["accessDetails"]` is an array; non-empty + `errorCode "0"` means
@@ -153,7 +153,7 @@ NOT a direct entitlementvalue field:
 {
   "endpoint": "Pulumi-Pipeline-AWS",
   "entitlementtype": "Entitlement",
-  "entQuery": "ent.entitlement_value = 'Deploy-EC2-Prod'"
+  "entQuery": "ent.entitlement_value = 'EC2Deploy-Prod'"
 }
 ```
 
@@ -203,13 +203,13 @@ retry once before propagating the error.
 Update `scripts/test_broker.sh` (or create if missing) to exercise:
 
 1. login → token
-2. getEntDetailsforUsers for wes-dev + Deploy-EC2-Dev → expect non-empty accessDetails
-3. getEntDetailsforUsers for wes-dev + Deploy-EC2-Prod → expect empty accessDetails
-4. createrequest for wes-dev + Deploy-EC2-Prod → capture requestkey
+2. getEntDetailsforUsers for wes-dev + EC2Deploy-Dev → expect non-empty accessDetails
+3. getEntDetailsforUsers for wes-dev + EC2Deploy-Prod → expect empty accessDetails
+4. createrequest for wes-dev + EC2Deploy-Prod → capture requestkey
 5. fetchRequestApprovalDetails with that requestkey → expect PENDING
 6. (manual UI step: approve as igaadmin)
 7. fetchRequestApprovalDetails again → expect APPROVED
-8. getEntDetailsforUsers for wes-dev + Deploy-EC2-Prod → expect non-empty accessDetails
+8. getEntDetailsforUsers for wes-dev + EC2Deploy-Prod → expect non-empty accessDetails
 9. cancelPendingRequest or remove entitlement to reset demo state
 
 ---

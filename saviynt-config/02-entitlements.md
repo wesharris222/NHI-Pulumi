@@ -1,6 +1,6 @@
 # 02 — Entitlements + Approval Workflows
 
-> **Goal:** Create the two entitlements (`Deploy-EC2-Dev` auto-approve, `Deploy-EC2-Prod` manual approve) under the `Pulumi-Pipeline-AWS` endpoint, and wire up the workflows that drive the demo's two outcomes.
+> **Goal:** Create the two entitlements (`EC2Deploy-Dev` auto-approve, `EC2Deploy-Prod` manual approve) under the `Pulumi-Pipeline-AWS` endpoint, and wire up the workflows that drive the demo's two outcomes.
 
 ## Prerequisites
 - Section A (`01-application-onboarding.md`) completed
@@ -17,6 +17,17 @@ BASE="https://eic-poc-wesharris.saviyntcloud.com/ECM/api/v5"
 ## B.1 Entitlement Type
 
 Saviynt requires entitlements to belong to an **Entitlement Type**, which is a per-endpoint definition of what kind of access this endpoint manages. We'll use `Entitlement` as our type name.
+
+> **Mental model — two stacked layers, both confusingly called some flavor of "entitlement":**
+>
+> | Layer | Role | Our demo |
+> |---|---|---|
+> | **Entitlement Type** *(this section)* | Per-endpoint *category* / schema. Carries default metadata (default workflow, requestability, risk, ownership). Analogous to an AD object class (`Group`), a Salesforce `Profile` vs `PermissionSet`, or a database table schema. | Type name `Entitlement`, display `Pipeline Access`, attached to endpoint `Pulumi-Pipeline-AWS` |
+> | **Entitlement** *(B.4 below)* | An *instance* under a type. The actual permission a user requests or holds. | `EC2Deploy-Dev`, `EC2Deploy-Prod` |
+>
+> Why this section comes before B.4: Saviynt refuses to create an entitlement without a type. The type also acts as a *defaults provider* (workflow, requestability) that individual entitlements can override. We leave the type's **Workflow** field blank because our two entitlements need *different* workflows — the binding happens per-entitlement in B.4.
+>
+> ⚠️ **Pick the right type when creating individual entitlements in B.4.** The type dropdown on the Create-Entitlement form is the *only* place this association is made; you generally cannot reassign type after the fact. If you create entitlements under the wrong type, you'll need to recreate them under fresh names (most tenants don't allow entitlement deletion once they have history).
 
 ### Click-by-click
 
@@ -53,7 +64,7 @@ If the type name you used differs from `Entitlement`, set `ENTITLEMENT_TYPE` in 
 
 ---
 
-## B.2 Approval Workflow #1 — Auto-Approve (for Deploy-EC2-Dev)
+## B.2 Approval Workflow #1 — Auto-Approve (for EC2Deploy-Dev)
 
 This workflow auto-approves any request without human intervention.
 
@@ -69,7 +80,7 @@ This workflow auto-approves any request without human intervention.
 3. Use the **Clone** / **Copy** action (right-click or Actions menu).
 4. On the clone, set:
    - **Name**: `WF-DeployEC2-Dev-AutoApprove`
-   - **Description**: `Auto-approve workflow for Deploy-EC2-Dev entitlement (cloned from <OOB name>)`
+   - **Description**: `Auto-approve workflow for EC2Deploy-Dev entitlement (cloned from <OOB name>)`
    - **Workflow Type**: confirm `AccessAddWorkflow`
 5. **Save**.
 6. **Activate** / **Publish** the clone. ⚠️ critical — without activation, the workflow exists but won't fire when bound.
@@ -85,7 +96,7 @@ Use this only if no suitable OOB workflow exists, or cloning isn't permitted on 
 3. Fill in:
    - **Name**: `WF-DeployEC2-Dev-AutoApprove`
    - **Workflow Type**: `AccessAddWorkflow`
-   - **Description**: `Auto-approve workflow for Deploy-EC2-Dev entitlement`
+   - **Description**: `Auto-approve workflow for EC2Deploy-Dev entitlement`
 4. **Save** to create the empty workflow shell, then enter the **Workflow Editor**.
 5. Build the flow using the **If-Else with `true` condition** pattern:
 
@@ -120,7 +131,7 @@ These are different user identities (or auto-approve, which doesn't count as a p
 
 ---
 
-## B.3 Approval Workflow #2 — Manual Approve via igaadmin (for Deploy-EC2-Prod)
+## B.3 Approval Workflow #2 — Manual Approve via igaadmin (for EC2Deploy-Prod)
 
 For demo v1, the approver is `igaadmin` (ROLE_ADMIN). This is a deliberate simplification — in a production design you'd separate request submission and approval into distinct identities.
 
@@ -177,12 +188,12 @@ This keeps the demo honest. Section C documents an optional `wes-approver` user 
 
 ## B.4 Create the Two Entitlements
 
-### Deploy-EC2-Dev
+### EC2Deploy-Dev
 
 1. **Admin** → **Identity Repository** → **Entitlements**.
 2. **Actions** → **Create Entitlement**.
 3. Fill in:
-   - **Entitlement Value**: `Deploy-EC2-Dev`
+   - **Entitlement Value**: `EC2Deploy-Dev`
    - **Display Name**: `Deploy to EC2 Dev Environment`
    - **Endpoint**: `Pulumi-Pipeline-AWS`
    - **Entitlement Type**: `Entitlement`
@@ -194,10 +205,10 @@ This keeps the demo honest. Section C documents an optional `wes-approver` user 
    - **Workflow**: `WF-DeployEC2-Dev-AutoApprove`
 4. **Save**.
 
-### Deploy-EC2-Prod
+### EC2Deploy-Prod
 
 Repeat with:
-- **Entitlement Value**: `Deploy-EC2-Prod`
+- **Entitlement Value**: `EC2Deploy-Prod`
 - **Display Name**: `Deploy to EC2 Prod Environment`
 - **Description**: `Permission to run the pipeline against prod. Requires manual approval.`
 - **Risk**: `High`
@@ -214,7 +225,7 @@ curl -s -X POST "$BASE/getEntitlements" \
   -d '{
     "endpoint": "Pulumi-Pipeline-AWS",
     "entitlementtype": "Entitlement",
-    "entQuery": "ent.entitlement_value like '\''Deploy-EC2-%'\''"
+    "entQuery": "ent.entitlement_value like '\''EC2Deploy-%'\''"
   }' | jq '.'
 ```
 
@@ -229,7 +240,7 @@ curl -s -X POST "$BASE/getEntitlements" \
   -d '{
     "endpoint": "Pulumi-Pipeline-AWS",
     "entitlementtype": "Entitlement",
-    "entQuery": "ent.entitlement_value = '\''Deploy-EC2-Prod'\''"
+    "entQuery": "ent.entitlement_value = '\''EC2Deploy-Prod'\''"
   }' | jq '.'
 ```
 
@@ -252,7 +263,7 @@ curl -s -X POST "$BASE/createrequest" \
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
     "securitysystem": "Pulumi-Pipeline-AWS",
-    "entitlement": "Deploy-EC2-Prod",
+    "entitlement": "EC2Deploy-Prod",
     "comments": "Pipeline run #42 — manual approval test for prod deploy",
     "requestor": "igaadmin",
     "checksod": "false"
@@ -311,7 +322,7 @@ curl -s -X POST "$BASE/fetchRequestApprovalDetails" \
 For the dev path, submit for a user who doesn't already hold the entitlement:
 
 ```bash
-# Use any test user who doesn't currently hold Deploy-EC2-Dev
+# Use any test user who doesn't currently hold EC2Deploy-Dev
 curl -s -X POST "$BASE/createrequest" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -320,7 +331,7 @@ curl -s -X POST "$BASE/createrequest" \
     "username": "some-test-user",
     "endpoint": "Pulumi-Pipeline-AWS",
     "securitysystem": "Pulumi-Pipeline-AWS",
-    "entitlement": "Deploy-EC2-Dev",
+    "entitlement": "EC2Deploy-Dev",
     "comments": "Auto-approve smoke test",
     "requestor": "igaadmin",
     "checksod": "false"
@@ -329,13 +340,13 @@ curl -s -X POST "$BASE/createrequest" \
 
 Within seconds, polling `fetchRequestApprovalDetails` should return `approvalstatus: "APPROVED"` (or equivalent terminal state).
 
-> Don't use `wes-dev` here — Section C assigns Deploy-EC2-Dev to them directly.
+> Don't use `wes-dev` here — Section C assigns EC2Deploy-Dev to them directly.
 
 ---
 
 ## B.6 Optional: SoD policy
 
-If you want the approver's view of a prod request to display "SoD check passed" — or block the request entirely if violated — configure an SoD ruleset that flags simultaneous holding of `Deploy-EC2-Dev` + `Deploy-EC2-Prod`.
+If you want the approver's view of a prod request to display "SoD check passed" — or block the request entirely if violated — configure an SoD ruleset that flags simultaneous holding of `EC2Deploy-Dev` + `EC2Deploy-Prod`.
 
 Then the broker can pass `checksod: "true"` in createRequest, and `fetchRequestApprovalDetails` (with `fetchSod: true`) will surface the result.
 
@@ -363,4 +374,4 @@ Then the broker can pass `checksod: "true"` in createRequest, and `fetchRequestA
 
 ## What's next
 
-Move to **03-roles-and-users.md** to create `wes-dev` and assign `Deploy-EC2-Dev` directly so the dev pipeline run skips the request flow.
+Move to **03-roles-and-users.md** to create `wes-dev` and assign `EC2Deploy-Dev` directly so the dev pipeline run skips the request flow.

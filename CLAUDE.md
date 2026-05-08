@@ -13,7 +13,7 @@
 - Bootstrap identity: igaadmin (broker SA AND prod approver in v1)
 - Beneficiary user: wes-dev
 - Application: Pulumi-Pipeline-AWS (Security System + Endpoint, same name)
-- Entitlements: Deploy-EC2-Dev (auto-approve), Deploy-EC2-Prod (manual)
+- Entitlements: EC2Deploy-Dev (auto-approve), EC2Deploy-Prod (manual)
 
 ## Verified API endpoints — Amsterdam GA
 The saviynt-config/03-roles-and-users.md file has the full settings.py block.

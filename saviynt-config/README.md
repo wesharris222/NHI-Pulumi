@@ -10,11 +10,11 @@ Step-by-step guides for configuring your Saviynt tenant to support this demo. Th
 
 - `00-OVERVIEW.md` — what objects you're creating and how they relate
 - `01-application-onboarding.md` — Pulumi-Pipeline-AWS application object with custom properties for NHI metadata
-- `02-entitlements.md` — Deploy-EC2-Dev (auto-approve workflow) and Deploy-EC2-Prod (manual approve workflow)
-- `03-roles-and-users.md` — wes-dev (Developer role assigned), wes-approver (with approval rights on Deploy-EC2-Prod)
+- `02-entitlements.md` — EC2Deploy-Dev (auto-approve workflow) and EC2Deploy-Prod (manual approve workflow)
+- `03-roles-and-users.md` — wes-dev (Developer role assigned), wes-approver (with approval rights on EC2Deploy-Prod)
 - `04-pam-endpoint.md` — endpoint configuration for AWS IAM credentials and EC2 instance accounts
 - `05-service-account.md` — broker SA setup with rotation policy, IP restriction, certification cadence
-- `06-test-checklist.md` — pre-demo validation: can wes-dev see Deploy-EC2-Dev? Does wes-approver get prod request notifications?
+- `06-test-checklist.md` — pre-demo validation: can wes-dev see EC2Deploy-Dev? Does wes-approver get prod request notifications?
 
 ## Object inventory
 
@@ -23,13 +23,13 @@ By the end of Phase 4, your tenant will have:
 | Object type | Names |
 |---|---|
 | Application | `Pulumi-Pipeline-AWS` |
-| Entitlements | `Deploy-EC2-Dev`, `Deploy-EC2-Prod` |
-| Roles | `Developer` (gets Deploy-EC2-Dev) |
+| Entitlements | `EC2Deploy-Dev`, `EC2Deploy-Prod` |
+| Roles | `Developer` (gets EC2Deploy-Dev) |
 | Users | `wes-dev`, `wes-approver`, `pulumi-broker-svc` (the SA) |
 | PAM Endpoints | `AWS-IAM-Endpoint`, `EC2-Instances-Endpoint` |
 | PAM Accounts | `pulumi-deployer` (AWS IAM), plus N EC2 NHI accounts created by demo runs |
-| Workflows | Auto-approve workflow for Deploy-EC2-Dev, manual approve workflow for Deploy-EC2-Prod |
-| SoD policy | Optional but recommended — flag if same user has Deploy-EC2-Dev and Deploy-EC2-Prod simultaneously |
+| Workflows | Auto-approve workflow for EC2Deploy-Dev, manual approve workflow for EC2Deploy-Prod |
+| SoD policy | Optional but recommended — flag if same user has EC2Deploy-Dev and EC2Deploy-Prod simultaneously |
 
 ## Custom property mapping (proposed)
 

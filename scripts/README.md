@@ -22,4 +22,4 @@ Helper scripts for local development, testing, and demo operation.
 
 - `pre_demo_checklist.sh` — verifies tenant state, broker is running, runner is connected, AWS is reachable
 - `cleanup_demo.sh` — removes EC2 instances, deletes test NHI accounts from Saviynt PAM
-- `reset_entitlement.sh` — removes Deploy-EC2-Prod from wes-dev so the demo can be replayed
+- `reset_entitlement.sh` — removes EC2Deploy-Prod from wes-dev so the demo can be replayed

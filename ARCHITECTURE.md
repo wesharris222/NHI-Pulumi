@@ -236,8 +236,8 @@ PATH_CREATE_ACCOUNT     = env("PATH_CREATE_ACCOUNT",     "/ECM/api/v5/createAcco
 
 # Saviynt object names this demo expects
 APP_NAME                = env("APP_NAME",                "Pulumi-Pipeline-AWS")
-ENT_DEPLOY_DEV          = env("ENT_DEPLOY_DEV",          "Deploy-EC2-Dev")
-ENT_DEPLOY_PROD         = env("ENT_DEPLOY_PROD",         "Deploy-EC2-Prod")
+ENT_DEPLOY_DEV          = env("ENT_DEPLOY_DEV",          "EC2Deploy-Dev")
+ENT_DEPLOY_PROD         = env("ENT_DEPLOY_PROD",         "EC2Deploy-Prod")
 PAM_ENDPOINT_AWS        = env("PAM_ENDPOINT_AWS",        "AWS-IAM-Endpoint")
 PAM_ENDPOINT_EC2        = env("PAM_ENDPOINT_EC2",        "EC2-Instances-Endpoint")
 PAM_ACCOUNT_AWS_IAM     = env("PAM_ACCOUNT_AWS_IAM",     "pulumi-deployer")  # the IAM account name in PAM

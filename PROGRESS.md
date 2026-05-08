@@ -145,7 +145,7 @@ Pipeline calls broker /register-nhi → vaults credentials in Saviynt PAM
 
 - [ ] `saviynt-config/00-OVERVIEW.md` — what you're building and why
 - [ ] `saviynt-config/01-application-onboarding.md` — Pulumi-Pipeline-AWS application object
-- [ ] `saviynt-config/02-entitlements.md` — Deploy-EC2-Dev (auto-approve) and Deploy-EC2-Prod (manual approve)
+- [ ] `saviynt-config/02-entitlements.md` — EC2Deploy-Dev (auto-approve) and EC2Deploy-Prod (manual approve)
 - [ ] `saviynt-config/03-roles-and-users.md` — wes-dev (Developer) and wes-approver
 - [ ] `saviynt-config/04-pam-endpoint.md` — endpoint for AWS IAM and EC2 instances
 - [ ] `saviynt-config/05-service-account.md` — broker SA setup with rotation policy

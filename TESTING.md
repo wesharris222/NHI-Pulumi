@@ -274,7 +274,7 @@ Once green, fill in:
 
 - `getUser` fallback validates against `/ECM/api/v5/getUser` with the
   documented body (`filtercriteria.username` + `responsefields:["username","entitlements"]`).
-  igaadmin doesn't hold `Deploy-EC2-Dev` (expected — that entitlement
+  igaadmin doesn't hold `EC2Deploy-Dev` (expected — that entitlement
   doesn't exist in the tenant yet).
 - `createrequest` validates against `/ECM/api/v5/createrequest` (lowercase)
   with the documented body. Saviynt returns errorCode=1 message="System
@@ -330,16 +330,16 @@ Use Claude Desktop with the prompt in
 It produces step-by-step instructions plus per-step API verifications for:
 
 - A. Security System + Endpoint named `Pulumi-Pipeline-AWS`
-- B. Two entitlements: `Deploy-EC2-Dev` (auto-approve) and `Deploy-EC2-Prod` (manual via `wes-approver`)
-- C. Two demo users: `wes-dev` (assigned `Deploy-EC2-Dev` directly) and `wes-approver`
+- B. Two entitlements: `EC2Deploy-Dev` (auto-approve) and `EC2Deploy-Prod` (manual via `wes-approver`)
+- C. Two demo users: `wes-dev` (assigned `EC2Deploy-Dev` directly) and `wes-approver`
 
 ### Run after Phase 4
 
 ```bash
-# Dev path — wes-dev already holds Deploy-EC2-Dev → expect 200 status:ok
+# Dev path — wes-dev already holds EC2Deploy-Dev → expect 200 status:ok
 bash scripts/preflight.sh wes-dev dev
 
-# Prod path — wes-dev does NOT hold Deploy-EC2-Prod → expect 200 status:pending
+# Prod path — wes-dev does NOT hold EC2Deploy-Prod → expect 200 status:pending
 # with a RequestId. Note the RequestId for Test 5 (poll + approve).
 bash scripts/preflight.sh wes-dev prod
 ```
@@ -348,8 +348,8 @@ bash scripts/preflight.sh wes-dev prod
 
 | Run | Expected | Why |
 |---|---|---|
-| `preflight wes-dev dev` | `200 {"status":"ok", "entitlement":"Deploy-EC2-Dev", ...}` | `wes-dev` was directly assigned this entitlement during Phase 4 user setup |
-| `preflight wes-dev prod` | `200 {"status":"pending", "request_id":"...", "entitlement":"Deploy-EC2-Prod", ...}` | `wes-dev` doesn't hold it; broker submits createrequest; manual workflow takes over |
+| `preflight wes-dev dev` | `200 {"status":"ok", "entitlement":"EC2Deploy-Dev", ...}` | `wes-dev` was directly assigned this entitlement during Phase 4 user setup |
+| `preflight wes-dev prod` | `200 {"status":"pending", "request_id":"...", "entitlement":"EC2Deploy-Prod", ...}` | `wes-dev` doesn't hold it; broker submits createrequest; manual workflow takes over |
 | `preflight igaadmin prod` | Either `ok` or `pending` depending on whether igaadmin holds it | Useful sanity-only |
 
 ### What to record

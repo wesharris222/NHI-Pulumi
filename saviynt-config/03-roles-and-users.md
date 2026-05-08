@@ -1,6 +1,6 @@
 # 03 — Users + Direct Entitlement Assignment
 
-> **Goal:** Create `wes-dev`, then directly assign `Deploy-EC2-Dev` so the dev-environment pipeline run finds the entitlement on `/preflight` immediately and skips the request flow entirely.
+> **Goal:** Create `wes-dev`, then directly assign `EC2Deploy-Dev` so the dev-environment pipeline run finds the entitlement on `/preflight` immediately and skips the request flow entirely.
 
 > **Why direct assignment vs. submitting a request:** The demo's narrative is "wes-dev is an established developer who already has dev access." If we set up `wes-dev` by submitting an access request — even an auto-approved one — there's a transient window where they don't yet hold the entitlement and the broker's first `/preflight` call would create a request instead of returning approved. Direct admin assignment is the clean baseline.
 
@@ -75,7 +75,7 @@ curl -s -X POST "$BASE/getUser" \
 
 ---
 
-## C.4 Direct Assignment of Deploy-EC2-Dev to wes-dev
+## C.4 Direct Assignment of EC2Deploy-Dev to wes-dev
 
 ### Click-by-click — Path A (UI, preferred)
 
@@ -85,14 +85,14 @@ curl -s -X POST "$BASE/getUser" \
 4. In the picker:
    - **Endpoint**: `Pulumi-Pipeline-AWS`
    - **Entitlement Type**: `Entitlement`
-   - **Entitlement Value**: select `Deploy-EC2-Dev`
+   - **Entitlement Value**: select `EC2Deploy-Dev`
 5. Save.
 
 > If your tenant has direct UI assignment disabled, use Path B.
 
 ### Click-by-click — Path B (admin-mediated request, no human approver)
 
-Submit an access request **as `igaadmin`** for `wes-dev` for `Deploy-EC2-Dev`. The auto-approve workflow handles it instantly.
+Submit an access request **as `igaadmin`** for `wes-dev` for `EC2Deploy-Dev`. The auto-approve workflow handles it instantly.
 
 ```bash
 curl -s -X POST "$BASE/createrequest" \
@@ -103,7 +103,7 @@ curl -s -X POST "$BASE/createrequest" \
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
     "securitysystem": "Pulumi-Pipeline-AWS",
-    "entitlement": "Deploy-EC2-Dev",
+    "entitlement": "EC2Deploy-Dev",
     "comments": "Baseline assignment for demo - Wes Dev needs dev environment access",
     "requestor": "igaadmin",
     "checksod": "false"
@@ -114,7 +114,7 @@ The auto-approve workflow fires and the entitlement is granted within seconds. V
 
 ---
 
-## C.5 Verify Deploy-EC2-Dev is on wes-dev
+## C.5 Verify EC2Deploy-Dev is on wes-dev
 
 This is **THE** check the broker's `/preflight` endpoint relies on. Get this right.
 
@@ -130,7 +130,7 @@ curl -s -X GET "$BASE/getEntDetailsforUsers" \
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
     "entitlementType": "Entitlement",
-    "entitlement_value": "Deploy-EC2-Dev"
+    "entitlement_value": "EC2Deploy-Dev"
   }' | jq '.'
 ```
 
@@ -145,7 +145,7 @@ curl -s -X GET "$BASE/getEntDetailsforUsers" \
       "username": "wes-dev",
       "endpointname": "Pulumi-Pipeline-AWS",
       "entitlementType": "Entitlement",
-      "entitlement_value": "Deploy-EC2-Dev",
+      "entitlement_value": "EC2Deploy-Dev",
       "entstatus": 1,
       ...
     }
@@ -197,7 +197,7 @@ You should see both entitlements listed.
 
 ---
 
-## C.6 Confirm wes-dev does NOT hold Deploy-EC2-Prod
+## C.6 Confirm wes-dev does NOT hold EC2Deploy-Prod
 
 The prod entitlement should NOT be on wes-dev (this is what makes the demo's prod path interesting):
 
@@ -209,7 +209,7 @@ curl -s -X GET "$BASE/getEntDetailsforUsers" \
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
     "entitlementType": "Entitlement",
-    "entitlement_value": "Deploy-EC2-Prod"
+    "entitlement_value": "EC2Deploy-Prod"
   }' | jq '.'
 ```
 
@@ -233,7 +233,7 @@ curl -s -X GET "$BASE/getEntDetailsforUsers" \
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
     "entitlementType": "Entitlement",
-    "entitlement_value": "Deploy-EC2-Dev"
+    "entitlement_value": "EC2Deploy-Dev"
   }' | jq '.accessDetails | length'
 ```
 
@@ -251,7 +251,7 @@ curl -s -X GET "$BASE/getEntDetailsforUsers" \
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
     "entitlementType": "Entitlement",
-    "entitlement_value": "Deploy-EC2-Prod"
+    "entitlement_value": "EC2Deploy-Prod"
   }' | jq '.accessDetails | length'
 ```
 
@@ -266,7 +266,7 @@ REQ_RESPONSE=$(curl -s -X POST "$BASE/createrequest" \
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
     "securitysystem": "Pulumi-Pipeline-AWS",
-    "entitlement": "Deploy-EC2-Prod",
+    "entitlement": "EC2Deploy-Prod",
     "comments": "Pipeline run #demo — prod deploy",
     "requestor": "igaadmin",
     "checksod": "false"
@@ -325,7 +325,7 @@ curl -s -X GET "$BASE/getEntDetailsforUsers" \
     "username": "wes-dev",
     "endpoint": "Pulumi-Pipeline-AWS",
     "entitlementType": "Entitlement",
-    "entitlement_value": "Deploy-EC2-Prod"
+    "entitlement_value": "EC2Deploy-Prod"
   }' | jq '.accessDetails | length'
 ```
 
@@ -333,9 +333,9 @@ curl -s -X GET "$BASE/getEntDetailsforUsers" \
 
 ### Resetting between demo runs
 
-To replay the prod demo, you need to revoke `Deploy-EC2-Prod` from `wes-dev` between runs. Two options:
+To replay the prod demo, you need to revoke `EC2Deploy-Prod` from `wes-dev` between runs. Two options:
 
-**Option A** — UI: edit wes-dev → Entitlements tab → remove Deploy-EC2-Prod.
+**Option A** — UI: edit wes-dev → Entitlements tab → remove EC2Deploy-Prod.
 
 **Option B** — `cancelPendingRequest` (only works on pending requests, not on already-granted entitlements):
 
@@ -406,8 +406,8 @@ PATH_CANCEL_PENDING_REQUEST = "/ECM/api/v5/cancelPendingRequest"        # POST (
 # Saviynt object names
 # ============================================================================
 APP_NAME                  = "Pulumi-Pipeline-AWS"   # security system + endpoint name
-ENT_DEPLOY_DEV            = "Deploy-EC2-Dev"
-ENT_DEPLOY_PROD           = "Deploy-EC2-Prod"
+ENT_DEPLOY_DEV            = "EC2Deploy-Dev"
+ENT_DEPLOY_PROD           = "EC2Deploy-Prod"
 ENTITLEMENT_TYPE          = "Entitlement"
 
 # ============================================================================

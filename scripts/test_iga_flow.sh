@@ -5,13 +5,13 @@
 # Validates the verified Amsterdam GA contracts against the live tenant per
 # the spec in docs/IGA_BRIEFING.md §"Test Harness Updates":
 #   1. login -> bearer token
-#   2. getEntDetailsforUsers wes-dev + Deploy-EC2-Dev   -> non-empty
-#   3. getEntDetailsforUsers wes-dev + Deploy-EC2-Prod  -> empty
-#   4. createrequest wes-dev + Deploy-EC2-Prod          -> capture requestkey
+#   2. getEntDetailsforUsers wes-dev + EC2Deploy-Dev   -> non-empty
+#   3. getEntDetailsforUsers wes-dev + EC2Deploy-Prod  -> empty
+#   4. createrequest wes-dev + EC2Deploy-Prod          -> capture requestkey
 #   5. fetchRequestApprovalDetails(requestkey, igaadmin) -> PENDING
 #   6. (manual UI step: approve as igaadmin)
 #   7. fetchRequestApprovalDetails(requestkey, igaadmin) -> APPROVED
-#   8. getEntDetailsforUsers wes-dev + Deploy-EC2-Prod  -> non-empty
+#   8. getEntDetailsforUsers wes-dev + EC2Deploy-Prod  -> non-empty
 #   9. cancelPendingRequest(requestkey)                  -> demo reset
 #
 # Reads tenant connection info from the same env vars the broker uses:
@@ -41,8 +41,8 @@ BASE="${BASE_URL%/}/ECM/api/v5"
 
 # Tunables — override via env if your demo objects are named differently.
 APP="${APP_NAME:-Pulumi-Pipeline-AWS}"
-ENT_DEV="${ENT_DEPLOY_DEV:-Deploy-EC2-Dev}"
-ENT_PROD="${ENT_DEPLOY_PROD:-Deploy-EC2-Prod}"
+ENT_DEV="${ENT_DEPLOY_DEV:-EC2Deploy-Dev}"
+ENT_PROD="${ENT_DEPLOY_PROD:-EC2Deploy-Prod}"
 ENT_TYPE="${ENTITLEMENT_TYPE:-Entitlement}"
 BENEFICIARY="${DEMO_REQUESTING_USER:-wes-dev}"
 APPROVER="${DEMO_APPROVER:-$USER}"

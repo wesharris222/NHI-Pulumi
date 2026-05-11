@@ -159,7 +159,9 @@ submit_request() {
     if [[ "$code" != "0" || -z "$key" ]]; then
         fail "createrequest did not return a request key (errorCode=$code)"
     fi
-    pass "createrequest returned requestkey=$key  (requestor=$REQUESTOR, beneficiary=$username)"
+    # IMPORTANT: pass() writes to stdout; redirect to stderr so the captured
+    # value from $(submit_request ...) is JUST the request key on stdout.
+    pass "createrequest returned requestkey=$key  (requestor=$REQUESTOR, beneficiary=$username)" >&2
     echo "$key"
 }
 
@@ -197,7 +199,9 @@ submit_remove() {
     if [[ "$code" != "0" || -z "$key" ]]; then
         fail "REMOVE createrequest failed (errorCode=$code)"
     fi
-    pass "REMOVE submitted (requestkey=$key) — SS Access Remove Workflow should auto-approve and provisioning task should auto-close"
+    # IMPORTANT: pass() writes to stdout; redirect to stderr so the captured
+    # value from $(submit_remove ...) is JUST the request key on stdout.
+    pass "REMOVE submitted (requestkey=$key) — SS Access Remove Workflow should auto-approve and provisioning task should auto-close" >&2
     echo "$key"
 }
 

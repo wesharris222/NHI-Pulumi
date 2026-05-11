@@ -2,7 +2,7 @@
 
 > **Purpose of this file:** This is the working roadmap for the demo. Update statuses as you build. When picking up in a new Claude Code session, this file (plus README.md and ARCHITECTURE.md) gives full context to continue without re-explaining the design.
 
-## Project State: 🟢 IGA CONFIG VERIFIED — Demo flow proven end-to-end via API. Broker implementation next.
+## Project State: 🟢 BROKER IGA-SIDE VALIDATED — Demo flow proven through the broker's API. PAM-side (Phase 5) next.
 
 Last updated: 2026-05-11 — IGA config Section A/B/C verified against tenant; both demo paths (dev auto-approve, prod manual approve via wes-approver) confirmed working. `automatedProvisioning: true` on the SS verified to auto-close provisioning tasks on approval — broker doesn't need updateTasks logic. SS-level Access Remove Workflow bound to OOB auto-approval workflow; REMOVE createrequest works cleanly for demo state resets. `scripts/test_iga_flow.sh full` validated end-to-end against live tenant (after fixing a stdout-pollution bug in submit_request that was masquerading as a Saviynt "transient error"). Broker IGA-endpoint smoke test (`scripts/test_broker.sh`) restructured to validate auth + /preflight (dev & prod) without touching unconfigured PAM endpoints.
 
@@ -79,10 +79,14 @@ Pipeline calls broker /register-nhi → vaults credentials in Saviynt PAM
 - [x] `scripts/test_broker.sh` — curl-based local test harness (subcommands: auth/dev/prod/status/full; PAM endpoints excluded until Phase 5)
 
 **Validation status (broker code paths):**
-- [ ] `/healthz` + HMAC auth modes — pending `scripts/test_broker.sh auth` run
-- [ ] `/preflight` (dev path, status=ok) — pending `scripts/test_broker.sh dev`
-- [ ] `/preflight` (prod path, status=pending → manual approve → status=approved) — pending `scripts/test_broker.sh prod`
+- [x] `/healthz` + HMAC auth modes (unsigned → 401/422, bad sig → 401) — validated 2026-05-11
+- [x] `/preflight` (dev path, status=ok) — validated 2026-05-11
+- [x] `/preflight` (prod path, status=pending → manual approve → status=approved) — validated 2026-05-11 (req 7690 lifecycle on tenant)
 - [ ] `/checkout-aws` / `/register-nhi` / `/checkin-aws` — blocked on Phase 5 PAM config
+
+**Validation findings (2026-05-11):**
+- Stale `ENT_DEPLOY_DEV=Deploy-EC2-Dev` / `ENT_DEPLOY_PROD=Deploy-EC2-Prod` in broker/.env (from before the rename to `EC2Deploy-{Dev,Prod}`) — cleared so `settings.py` verified defaults take effect. Anyone copying from an older `.env.example` will hit this; the in-repo `.env.example` no longer carries these lines.
+- Broker reads `.env` at import; `--reload` watches Python files but not always `.env`, so config changes need a hard restart.
 
 **Endpoints:**
 | Method | Path | Purpose |

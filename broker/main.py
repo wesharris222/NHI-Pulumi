@@ -115,7 +115,10 @@ def preflight(req: PreflightRequest) -> PreflightResponse:
         )
 
     request_id = _saviynt.create_access_request(
-        req.requesting_user, entitlement, req.justification
+        req.requesting_user,
+        entitlement,
+        ent_type,
+        req.justification,
     )
     log.info(
         "preflight: created access request %s for user=%s entitlement=%s",

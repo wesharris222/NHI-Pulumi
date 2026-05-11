@@ -13,8 +13,10 @@ Flows:
   - checkin -> returns credential, triggers rotation
   - user_has_entitlement -> getEntDetailsforUsers (GET with JSON body);
       true iff errorCode=="0" and accessDetails non-empty
-  - create_access_request -> createrequest (POST); entitlement is a string,
-      requestor is the broker SA, beneficiary is `username`
+  - create_access_request -> createrequest (POST); entitlement is an array
+      of {entitlementtype, entitlementvalue} objects, accountname required,
+      requestor MUST equal `username` (beneficiary) to avoid the admin-on-
+      behalf auto-approve trap
   - fetch_request_status -> fetchRequestApprovalDetails (POST);
       returns pending|approved|rejected|unknown
   - create_nhi_account -> registers a new NHI in Saviynt PAM
@@ -296,38 +298,64 @@ class SaviyntClient:
         self,
         username: str,
         entitlement_name: str,
+        entitlement_type: str,
         justification: str,
         *,
+        account_name: str | None = None,
         requestor: str | None = None,
     ) -> str:
         """
         Open an entitlement-add request via /ECM/api/v5/createrequest
         (Saviynt EIC Amsterdam GA).
 
-        Verified payload shape (saviynt-config/02-entitlements.md §B.5):
-          requesttype:    "ADD"
-          username:       beneficiary (who's getting the entitlement)
-          endpoint:       application/endpoint name (= APP_NAME)
-          securitysystem: top-level security system (often == endpoint name)
-          entitlement:    plain string, NOT an array of objects
-          comments:       justification text
-          requestor:      submitter (the broker SA, e.g. igaadmin)
-          checksod:       "false" for v1; flip when an SoD ruleset is in place
+        Verified payload shape (saviynt-config/03-roles-and-users.md §C.4 +
+        §C.7, validated 2026-05-08 against live tenant):
+          requesttype:                "ADD"
+          username:                   beneficiary
+          endpoint / securitysystem:  APP_NAME / SECURITY_SYSTEM
+          accountname:                user's account on the endpoint (required)
+          entitlement:                ARRAY of {entitlementtype, entitlementvalue}
+          comments + per-entitlement businessjustification
+          requestor:                  MUST equal `username` (beneficiary) for
+                                      manual approval to fire. If requestor !=
+                                      beneficiary, Saviynt silently
+                                      auto-approves entitlement requests
+                                      regardless of workflow content.
+          createaccountifnotexists:   "false" — account is provisioned
+                                      out-of-band before pipeline runs
+          checksod:                   "false" for v1
 
-        Response: {msg, requestkey, errorCode}. We return requestkey — that
-        same value is what fetchRequestApprovalDetails wants as `requestKey`.
+        Response: {msg, RequestId, requestkey, errorCode}. We return
+        requestkey — the per-entitlement request key fetchRequestApprovalDetails
+        wants. RequestId is the parent ARS_Request and isn't what we poll on.
         """
         self._ensure_logged_in()
         s = self._settings
+        # Default account name = beneficiary username, matching the demo's
+        # account-naming convention. Override if the endpoint uses different
+        # account names than usernames.
+        acct_name = account_name or username
+        # Default requestor = beneficiary. This is REQUIRED to avoid the
+        # admin-on-behalf auto-approve trap; do not override unless you fully
+        # understand the implications.
+        req_actor = requestor or username
         payload = {
             "requesttype": "ADD",
             "username": username,
             "endpoint": s.app_name,
             "securitysystem": s.security_system,
-            "entitlement": entitlement_name,
+            "accountname": acct_name,
             "comments": justification,
-            "requestor": requestor or s.demo_requestor,
+            "requestor": req_actor,
+            "createaccountifnotexists": "false",
             "checksod": "false",
+            "entitlement": [
+                {
+                    "entitlementtype": entitlement_type,
+                    "entitlementvalue": entitlement_name,
+                    "businessjustification": justification,
+                }
+            ],
         }
         resp = self._post_json(s.path_create_request, payload)
 

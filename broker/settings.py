@@ -100,9 +100,16 @@ class Settings:
     pam_account_aws_iam: str
 
     # ----- Demo identity wiring ---------------------------------------------
-    # The user that submits createrequest on behalf of the requesting user, and
-    # the user used as `userName` for fetchRequestApprovalDetails (i.e., the
-    # workflow approver). For demo v1 both default to the SA itself.
+    # demo_approver = the user `userName` field on fetchRequestApprovalDetails
+    # (the workflow approver). Must be a separate identity from the broker SA,
+    # because the prod workflow routes to this user via Custom Assignment in
+    # WF-PulumiPipeline-AddAccess. Default `wes-approver`.
+    #
+    # demo_requestor is kept for backwards compatibility / cancelPendingRequest
+    # paths where the broker submits an admin-mediated action. The broker no
+    # longer uses it for createrequest — createrequest's `requestor` field is
+    # always set to the beneficiary username to avoid the admin-on-behalf
+    # auto-approve trap.
     demo_requestor: str
     demo_approver: str
 
@@ -168,9 +175,11 @@ def load_settings() -> Settings:
         # Saviynt object names ----------------------------------------------
         app_name=_env("APP_NAME", "Pulumi-Pipeline-AWS"),
         security_system=_env("SECURITY_SYSTEM", _env("APP_NAME", "Pulumi-Pipeline-AWS")),
-        # Per-env Entitlement Types — dev and prod live under different types so
-        # each can carry its own Add Workflow (auto-approve vs manual). See
-        # saviynt-config/02-entitlements.md §B.1.
+        # Per-env Entitlement Types. The SS-level Access Add Workflow uses an
+        # If-Else on `entitlement.entitlementtypekey.entitlementname` to route
+        # prod requests through manual approval. So the type *names* here must
+        # match what the workflow's If-Else condition checks for.
+        # See saviynt-config/02-entitlements.md.
         entitlement_type_dev=_env("ENTITLEMENT_TYPE_DEV", "EntDev"),
         entitlement_type_prod=_env("ENTITLEMENT_TYPE_PROD", "EntProd"),
         ent_deploy_dev=_env("ENT_DEPLOY_DEV", "EC2Deploy-Dev"),
@@ -180,10 +189,12 @@ def load_settings() -> Settings:
         pam_account_aws_iam=_env("PAM_ACCOUNT_AWS_IAM", "pulumi-deployer"),
 
         # Demo identity wiring ----------------------------------------------
-        # Default both to whatever the SA logs in as. Override DEMO_REQUESTOR
-        # to log requests under a different broker-side identity, or
-        # DEMO_APPROVER to point fetchRequestApprovalDetails at the user
-        # who owns the prod approval workflow when it differs from the SA.
+        # DEMO_APPROVER must point at the user the prod workflow routes to —
+        # for this tenant that's `wes-approver` (verified). Defaulting to the
+        # SA itself would cause silent auto-approve on the prod path.
+        # DEMO_REQUESTOR is unused by the broker for createrequest (the
+        # beneficiary is always the requestor); it's kept for admin-mediated
+        # cleanup paths like cancelPendingRequest.
         demo_requestor=_env_first(
             ["DEMO_REQUESTOR", "SAVIYNT_USERNAME", "SavAPIUser"], required=True
         ),

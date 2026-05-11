@@ -1,209 +1,219 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Phase 1 smoke test for the broker.
+# Phase 1 smoke test for the broker — HMAC-signed requests against the
+# running uvicorn process.
 #
-# Hits every endpoint in sequence with HMAC-signed requests. By default it
-# expects a real Saviynt tenant behind the broker — a successful run validates
-# tenant connectivity AND broker correctness in one pass.
+# Currently exercises the IGA-side endpoints (preflight + status). PAM-side
+# endpoints (checkout-aws / register-nhi / checkin-aws) require Phase 5
+# tenant config and are NOT covered here — they live in scripts/test_pam.sh
+# once that's written.
 #
-# Usage:
-#   BROKER_URL=http://127.0.0.1:18443 \
-#   BROKER_HMAC_SECRET=$(cat ../broker/.env | grep BROKER_HMAC_SECRET | cut -d= -f2) \
-#   REQUESTING_USER=wes-dev \
-#   ./scripts/test_broker.sh
+# Subcommands:
+#   scripts/test_broker.sh auth         # /healthz + HMAC auth failure modes
+#   scripts/test_broker.sh dev          # /preflight target_env=dev (expect ok)
+#   scripts/test_broker.sh prod         # /preflight prod + manual approve + status poll
+#   scripts/test_broker.sh status <id>  # one-shot /preflight/status poll
+#   scripts/test_broker.sh full         # auth + dev + prod, in sequence (default)
 #
-# Skip the live tenant calls and only verify auth + healthz with --auth-only.
+# Required env:
+#   BROKER_HMAC_SECRET    must match broker/.env
+#
+# Optional env:
+#   BROKER_URL            default http://127.0.0.1:18443
+#   REQUESTING_USER       default wes-dev (the beneficiary)
 # =============================================================================
 
 set -euo pipefail
 
 BROKER_URL="${BROKER_URL:-http://127.0.0.1:18443}"
-HMAC_SECRET="${BROKER_HMAC_SECRET:?BROKER_HMAC_SECRET must be set}"
+HMAC_SECRET="${BROKER_HMAC_SECRET:?BROKER_HMAC_SECRET must be set (grep BROKER_HMAC_SECRET broker/.env)}"
 REQUESTING_USER="${REQUESTING_USER:-wes-dev}"
-TARGET_ENV="${TARGET_ENV:-dev}"
 
-# Optional: pass --auth-only to skip endpoints that touch Saviynt
-AUTH_ONLY=0
-if [[ "${1:-}" == "--auth-only" ]]; then
-    AUTH_ONLY=1
-fi
-
-GREEN="\033[0;32m"
-RED="\033[0;31m"
-YELLOW="\033[1;33m"
-RESET="\033[0m"
-
-pass() { echo -e "${GREEN}[PASS]${RESET} $1"; }
-fail() { echo -e "${RED}[FAIL]${RESET} $1"; exit 1; }
-info() { echo -e "${YELLOW}[INFO]${RESET} $1"; }
+GREEN="\033[0;32m"; RED="\033[0;31m"; YELLOW="\033[1;33m"; RESET="\033[0m"
+pass() { echo -e "${GREEN}[PASS]${RESET} $*"; }
+fail() { echo -e "${RED}[FAIL]${RESET} $*" >&2; exit 1; }
+info() { echo -e "${YELLOW}[INFO]${RESET} $*"; }
 
 # -----------------------------------------------------------------------------
-# Build a signed request and call curl. Echoes the response body to stdout
-# and the http status to stderr (one line: "HTTP <code>").
+# signed_call <method> <path> [body]
+# Echoes the full curl response (body + trailing "HTTP <code>" line).
 # -----------------------------------------------------------------------------
 signed_call() {
-    local method="$1"
-    local path="$2"
-    local body="${3:-}"
-
+    local method="$1" path="$2" body="${3:-}"
     local ts nonce sig
     ts=$(date +%s)
     nonce=$(head -c 16 /dev/urandom | xxd -p)
-
-    # message = "{ts}.{nonce}.{body}"
     local msg="${ts}.${nonce}.${body}"
-    sig=$(printf '%s' "$msg" \
-        | openssl dgst -sha256 -hmac "$HMAC_SECRET" \
-        | sed 's/^.* //')
-
-    local url="${BROKER_URL}${path}"
-    local response
-    response=$(curl -sS -w '\nHTTP %{http_code}\n' \
-        -X "$method" "$url" \
+    sig=$(printf '%s' "$msg" | openssl dgst -sha256 -hmac "$HMAC_SECRET" | sed 's/^.* //')
+    curl -sS -w '\nHTTP %{http_code}\n' \
+        -X "$method" "${BROKER_URL}${path}" \
         -H 'Content-Type: application/json' \
         -H "X-Broker-Timestamp: ${ts}" \
         -H "X-Broker-Nonce: ${nonce}" \
         -H "X-Broker-Signature: ${sig}" \
-        ${body:+-d "$body"})
-
-    echo "$response"
+        ${body:+-d "$body"}
 }
 
-http_code() {
-    # Last "HTTP <code>" line in the captured curl output
-    echo "$1" | awk '/^HTTP /{code=$2} END{print code}'
+http_code() { echo "$1" | awk '/^HTTP /{c=$2} END{print c}'; }
+
+# extract_str_json <response_body> <field>  -> first occurrence as string
+extract_str_json() {
+    echo "$1" | sed -n "s/.*\"$2\":[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1
 }
 
 # =============================================================================
-# 1. Healthz (unauthenticated)
+# auth — /healthz + missing/bad-signature 401 checks
 # =============================================================================
-info "1. GET /healthz (no auth)"
-hz=$(curl -sS -w '\nHTTP %{http_code}\n' "${BROKER_URL}/healthz") || fail "broker not reachable"
-hz_code=$(http_code "$hz")
-[[ "$hz_code" == "200" ]] || fail "/healthz returned $hz_code: $hz"
-pass "/healthz returned 200"
+run_auth() {
+    info "GET /healthz (no auth)"
+    local r
+    r=$(curl -sS -w '\nHTTP %{http_code}\n' "${BROKER_URL}/healthz") \
+        || fail "broker not reachable at $BROKER_URL"
+    local c
+    c=$(http_code "$r")
+    [[ "$c" == "200" ]] || fail "/healthz: $c"
+    pass "/healthz 200"
 
-# =============================================================================
-# 2. Auth: missing signature -> 401
-# =============================================================================
-info "2. POST /preflight without signature -> expect 401"
-no_sig=$(curl -sS -w '\nHTTP %{http_code}\n' -X POST "${BROKER_URL}/preflight" \
-    -H 'Content-Type: application/json' -d '{}')
-no_sig_code=$(http_code "$no_sig")
-[[ "$no_sig_code" == "401" || "$no_sig_code" == "422" ]] \
-    || fail "expected 401/422 without signature; got $no_sig_code"
-pass "unsigned request rejected ($no_sig_code)"
+    info "POST /preflight without signature -> expect 401/422"
+    r=$(curl -sS -w '\nHTTP %{http_code}\n' -X POST "${BROKER_URL}/preflight" \
+        -H 'Content-Type: application/json' -d '{}')
+    c=$(http_code "$r")
+    [[ "$c" == "401" || "$c" == "422" ]] || fail "unsigned: $c"
+    pass "unsigned request rejected ($c)"
 
-# =============================================================================
-# 3. Auth: bad signature -> 401
-# =============================================================================
-info "3. POST /preflight with wrong signature -> expect 401"
-ts=$(date +%s)
-nonce="bad-$(head -c 8 /dev/urandom | xxd -p)"
-bad=$(curl -sS -w '\nHTTP %{http_code}\n' -X POST "${BROKER_URL}/preflight" \
-    -H 'Content-Type: application/json' \
-    -H "X-Broker-Timestamp: ${ts}" \
-    -H "X-Broker-Nonce: ${nonce}" \
-    -H "X-Broker-Signature: deadbeef" \
-    -d '{"requesting_user":"x","target_env":"dev"}')
-bad_code=$(http_code "$bad")
-[[ "$bad_code" == "401" ]] || fail "expected 401 with bad signature; got $bad_code"
-pass "bad signature rejected (401)"
-
-if [[ "$AUTH_ONLY" == "1" ]]; then
-    pass "auth-only mode complete"
-    exit 0
-fi
-
-# =============================================================================
-# 4. /preflight (live)
-# =============================================================================
-info "4. POST /preflight (live tenant call)"
-preflight_body="$(printf '{"requesting_user":"%s","target_env":"%s","justification":"smoke test"}' \
-    "$REQUESTING_USER" "$TARGET_ENV")"
-pf=$(signed_call POST /preflight "$preflight_body")
-pf_code=$(http_code "$pf")
-echo "$pf"
-[[ "$pf_code" == "200" ]] || fail "/preflight returned $pf_code"
-pass "/preflight returned 200"
-
-# Capture request_id if pending
-PREFLIGHT_REQ_ID=$(echo "$pf" \
-    | sed -n 's/.*"request_id":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-PREFLIGHT_STATUS=$(echo "$pf" \
-    | sed -n 's/.*"status":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-
-# =============================================================================
-# 5. /preflight/status/{id} (only if pending)
-# =============================================================================
-if [[ "$PREFLIGHT_STATUS" == "pending" && -n "$PREFLIGHT_REQ_ID" ]]; then
-    info "5. GET /preflight/status/${PREFLIGHT_REQ_ID}"
-    ps=$(signed_call GET "/preflight/status/${PREFLIGHT_REQ_ID}")
-    ps_code=$(http_code "$ps")
-    echo "$ps"
-    [[ "$ps_code" == "200" ]] || fail "preflight status returned $ps_code"
-    pass "/preflight/status returned 200 (poll once)"
-else
-    info "5. preflight returned status=${PREFLIGHT_STATUS}; skipping poll"
-fi
-
-# =============================================================================
-# 6. /checkout-aws (only if user already entitled — preflight ok)
-# =============================================================================
-if [[ "$PREFLIGHT_STATUS" == "ok" ]]; then
-    info "6. POST /checkout-aws"
-    co_body="$(printf '{"requesting_user":"%s","target_env":"%s"}' \
-        "$REQUESTING_USER" "$TARGET_ENV")"
-    co=$(signed_call POST /checkout-aws "$co_body")
-    co_code=$(http_code "$co")
-    co_redacted=$(echo "$co" | sed 's/\("aws_secret_access_key":"\)[^"]*/\1***REDACTED***/')
-    echo "$co_redacted"
-    [[ "$co_code" == "200" ]] || fail "/checkout-aws returned $co_code"
-    pass "/checkout-aws returned 200"
-
-    ACCOUNT_KEY=$(echo "$co" \
-        | sed -n 's/.*"account_key":[[:space:]]*\([0-9]*\).*/\1/p' | head -n1)
-
-    # ===========================================================
-    # 7. /register-nhi (synthetic instance, won't exist in AWS)
-    # ===========================================================
-    info "7. POST /register-nhi (synthetic test instance)"
-    nhi_body=$(cat <<EOF
-{
-  "instance_id": "i-test0000000000000",
-  "public_ip": "203.0.113.1",
-  "target_env": "${TARGET_ENV}",
-  "requesting_user": "${REQUESTING_USER}",
-  "owner": "${REQUESTING_USER}",
-  "os_username": "ubuntu",
-  "os_password": "test-password-do-not-use"
+    info "POST /preflight with bad signature -> expect 401"
+    local ts
+    ts=$(date +%s)
+    r=$(curl -sS -w '\nHTTP %{http_code}\n' -X POST "${BROKER_URL}/preflight" \
+        -H 'Content-Type: application/json' \
+        -H "X-Broker-Timestamp: ${ts}" \
+        -H "X-Broker-Nonce: bad-$(head -c 8 /dev/urandom | xxd -p)" \
+        -H "X-Broker-Signature: deadbeef" \
+        -d '{"requesting_user":"x","target_env":"dev"}')
+    c=$(http_code "$r")
+    [[ "$c" == "401" ]] || fail "bad signature: $c"
+    pass "bad signature rejected (401)"
 }
-EOF
-)
-    nhi=$(signed_call POST /register-nhi "$nhi_body")
-    nhi_code=$(http_code "$nhi")
-    echo "$nhi"
-    if [[ "$nhi_code" == "200" ]]; then
-        pass "/register-nhi returned 200"
-    else
-        info "/register-nhi returned ${nhi_code} — expected if PAM endpoint or createAccount path needs tenant tuning (see PROGRESS.md Phase 5)"
+
+# =============================================================================
+# dev — /preflight for dev path; expect status: ok because wes-dev pre-holds
+# =============================================================================
+run_dev() {
+    info "POST /preflight target_env=dev   (expect status=ok — standing access)"
+    local body
+    body="$(printf '{"requesting_user":"%s","target_env":"dev","justification":"broker smoke test (dev path)"}' "$REQUESTING_USER")"
+    local r
+    r=$(signed_call POST /preflight "$body")
+    echo "$r"
+    local c status
+    c=$(http_code "$r")
+    [[ "$c" == "200" ]] || fail "/preflight dev: HTTP $c"
+    status=$(extract_str_json "$r" status)
+    [[ "$status" == "ok" ]] || fail "expected status=ok, got '$status'"
+    pass "/preflight dev: status=ok"
+}
+
+# =============================================================================
+# prod — /preflight for prod path; expect status: pending + request_id;
+#        manual approval pause; poll /preflight/status until approved
+# =============================================================================
+run_prod() {
+    info "POST /preflight target_env=prod   (expect status=pending, request_id)"
+    local body
+    body="$(printf '{"requesting_user":"%s","target_env":"prod","justification":"broker smoke test (prod path)"}' "$REQUESTING_USER")"
+    local r
+    r=$(signed_call POST /preflight "$body")
+    echo "$r"
+    local c status request_id
+    c=$(http_code "$r")
+    [[ "$c" == "200" ]] || fail "/preflight prod: HTTP $c"
+    status=$(extract_str_json "$r" status)
+    request_id=$(extract_str_json "$r" request_id)
+    if [[ "$status" == "ok" ]]; then
+        fail "prod /preflight returned ok — wes-dev already holds EC2Deploy-Prod; run 'scripts/test_iga_flow.sh remove' first"
     fi
+    [[ "$status" == "pending" ]] || fail "expected status=pending, got '$status'"
+    [[ -n "$request_id" ]] || fail "no request_id in response"
+    pass "/preflight prod: status=pending, request_id=$request_id"
 
-    # ===========================================================
-    # 8. /checkin-aws
-    # ===========================================================
-    if [[ -n "$ACCOUNT_KEY" ]]; then
-        info "8. POST /checkin-aws account_key=${ACCOUNT_KEY}"
-        ci_body="$(printf '{"account_key":%s}' "$ACCOUNT_KEY")"
-        ci=$(signed_call POST /checkin-aws "$ci_body")
-        ci_code=$(http_code "$ci")
-        echo "$ci"
-        [[ "$ci_code" == "200" ]] || fail "/checkin-aws returned $ci_code"
-        pass "/checkin-aws returned 200"
-    fi
-else
-    info "6-8. skipping checkout/nhi/checkin because preflight is ${PREFLIGHT_STATUS}"
-fi
+    echo
+    info "===> MANUAL STEP: Log into Saviynt UI as wes-approver and APPROVE request $request_id"
+    info "     (if you step away, resume later with:  $0 status $request_id)"
+    read -r -p "Press Enter once approved..." _
 
-echo
-pass "smoke test complete"
+    info "Polling /preflight/status/$request_id every 5s, up to 5 minutes"
+    local attempt=0 max=60
+    while (( attempt < max )); do
+        attempt=$((attempt + 1))
+        r=$(signed_call GET "/preflight/status/$request_id")
+        echo "$r"
+        c=$(http_code "$r")
+        [[ "$c" == "200" ]] || fail "/preflight/status: HTTP $c"
+        status=$(extract_str_json "$r" status)
+        case "$status" in
+            approved)
+                pass "/preflight/status: approved   (attempt $attempt)"
+                return
+                ;;
+            rejected)
+                fail "request was rejected"
+                ;;
+            pending|unknown)
+                info "status=$status (attempt $attempt/$max) — sleeping 5s"
+                sleep 5
+                ;;
+            *)
+                fail "unexpected status: '$status'"
+                ;;
+        esac
+    done
+    fail "timed out waiting for approval — resume polling with: $0 status $request_id"
+}
+
+# =============================================================================
+# status <id> — one-shot poll on an existing request
+# =============================================================================
+run_status() {
+    local id="$1"
+    info "GET /preflight/status/$id"
+    local r
+    r=$(signed_call GET "/preflight/status/$id")
+    echo "$r"
+    local c
+    c=$(http_code "$r")
+    [[ "$c" == "200" ]] || fail "/preflight/status: HTTP $c"
+    pass "status: $(extract_str_json "$r" status)"
+}
+
+# =============================================================================
+# Dispatch
+# =============================================================================
+case "${1:-full}" in
+    auth)
+        run_auth
+        ;;
+    dev)
+        run_dev
+        ;;
+    prod)
+        run_prod
+        ;;
+    status)
+        [[ -n "${2:-}" ]] || fail "usage: $0 status <request_id>"
+        run_status "$2"
+        ;;
+    full)
+        run_auth
+        echo
+        run_dev
+        echo
+        run_prod
+        echo
+        pass "broker smoke test complete"
+        info "Reset state for next run:  scripts/test_iga_flow.sh remove"
+        ;;
+    *)
+        echo "usage: $0 [full|auth|dev|prod|status <request_id>]" >&2
+        exit 2
+        ;;
+esac

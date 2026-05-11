@@ -4,7 +4,7 @@
 
 ## Project State: 🟢 IGA CONFIG VERIFIED — Demo flow proven end-to-end via API. Broker implementation next.
 
-Last updated: 2026-05-11 — IGA config Section A/B/C verified against tenant; both demo paths (dev auto-approve, prod manual approve via wes-approver) confirmed working. `automatedProvisioning: true` on the SS verified to auto-close provisioning tasks on approval — broker doesn't need updateTasks logic. SS-level Access Remove Workflow bound to OOB auto-approval workflow; REMOVE createrequest works cleanly for demo state resets.
+Last updated: 2026-05-11 — IGA config Section A/B/C verified against tenant; both demo paths (dev auto-approve, prod manual approve via wes-approver) confirmed working. `automatedProvisioning: true` on the SS verified to auto-close provisioning tasks on approval — broker doesn't need updateTasks logic. SS-level Access Remove Workflow bound to OOB auto-approval workflow; REMOVE createrequest works cleanly for demo state resets. `scripts/test_iga_flow.sh full` validated end-to-end against live tenant (after fixing a stdout-pollution bug in submit_request that was masquerading as a Saviynt "transient error"). Broker IGA-endpoint smoke test (`scripts/test_broker.sh`) restructured to validate auth + /preflight (dev & prod) without touching unconfigured PAM endpoints.
 
 ---
 
@@ -64,19 +64,25 @@ Pipeline calls broker /register-nhi → vaults credentials in Saviynt PAM
 - [x] .gitignore
 - [ ] *(complete after first test pass)* Update with any tenant-specific corrections
 
-### Phase 1 — Broker (FastAPI) ⏳ NEXT
+### Phase 1 — Broker (FastAPI) 🟡 IN PROGRESS — IGA half coded, awaiting live validation
 **Location:** `broker/`
 **Goal:** Saviynt-facing service with five endpoints, all HMAC-authenticated.
 
-- [ ] `broker/settings.py` — configurable Saviynt URL, endpoint paths, account names
-- [ ] `broker/.env.example` — bootstrap secret template
-- [ ] `broker/saviynt_client.py` — Saviynt API wrapper (login, getAccount, LLT, checkout, createRequest, fetchRequestStatus, createAccount)
-- [ ] `broker/auth.py` — HMAC validation middleware
-- [ ] `broker/main.py` — FastAPI app with routes
-- [ ] `broker/models.py` — Pydantic request/response models
-- [ ] `broker/requirements.txt`
-- [ ] `broker/README.md` — local run instructions
-- [ ] `scripts/test_broker.sh` — curl-based local test harness
+- [x] `broker/settings.py` — configurable Saviynt URL, endpoint paths, account names
+- [x] `broker/.env.example` — bootstrap secret template (DEMO_APPROVER=wes-approver defaulted)
+- [x] `broker/saviynt_client.py` — Saviynt API wrapper. IGA flows (login, user_has_entitlement, create_access_request, fetch_request_status, cancel_pending_request) aligned with verified contracts. PAM flows (getAccount, LLT, checkout, checkin, createAccount) coded but not validated against live tenant (Phase 5).
+- [x] `broker/auth.py` — HMAC validation middleware
+- [x] `broker/main.py` — FastAPI app with all five routes wired
+- [x] `broker/models.py` — Pydantic request/response models
+- [x] `broker/requirements.txt`
+- [x] `broker/README.md` — local run instructions
+- [x] `scripts/test_broker.sh` — curl-based local test harness (subcommands: auth/dev/prod/status/full; PAM endpoints excluded until Phase 5)
+
+**Validation status (broker code paths):**
+- [ ] `/healthz` + HMAC auth modes — pending `scripts/test_broker.sh auth` run
+- [ ] `/preflight` (dev path, status=ok) — pending `scripts/test_broker.sh dev`
+- [ ] `/preflight` (prod path, status=pending → manual approve → status=approved) — pending `scripts/test_broker.sh prod`
+- [ ] `/checkout-aws` / `/register-nhi` / `/checkin-aws` — blocked on Phase 5 PAM config
 
 **Endpoints:**
 | Method | Path | Purpose |

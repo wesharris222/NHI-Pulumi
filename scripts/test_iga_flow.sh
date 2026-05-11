@@ -386,11 +386,12 @@ case "${1:-full}" in
             "test_iga_flow.sh — full flow")
         info "Settle delay before first poll (Saviynt sometimes needs a beat)"
         sleep 3
-        info "Poll (expect PENDING)"
+        info "Initial poll (informational — Saviynt may not be queryable for ~30s after createrequest)"
         S1=$(poll_status "$TOKEN" "$KEY")
-        [[ "$S1" == "PENDING" || "$S1" == "UNKNOWN" ]] \
-            || fail "expected PENDING, got $S1 — check whether requestor=approver trap fired"
-        pass "status=$S1"
+        info "initial status: $S1  (requestkey=$KEY)"
+        if [[ "$S1" == "APPROVED" ]]; then
+            fail "request auto-approved BEFORE manual step — requestor=approver trap likely fired"
+        fi
 
         echo
         info "===> MANUAL STEP: Log into Saviynt UI as $APPROVER and APPROVE request $KEY"

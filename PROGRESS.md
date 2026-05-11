@@ -156,10 +156,11 @@ Pipeline calls broker /register-nhi → vaults credentials in Saviynt PAM
 - [x] `saviynt-config/01-application-onboarding.md` — Pulumi-Pipeline-AWS Security System + Endpoint **(verified in tenant)**
 - [x] `saviynt-config/02-entitlements.md` — EC2Deploy-Dev + EC2Deploy-Prod under EntDev/EntProd types **(verified; workflow architecture corrected from per-type to single SS-level with If-Else)**
 - [x] `saviynt-config/03-roles-and-users.md` — wes-dev with EC2Deploy-Dev directly assigned, wes-approver for prod approvals **(verified; payload shape and requestor=beneficiary rule corrected)**
+- [x] `saviynt-config/04-aws-cross-account.md` — Saviynt ↔ customer-AWS trust via CloudFormation Stack (Security Analyzer + IGA + PAM template); AWS Connection in Saviynt **(written 2026-05-11; not yet executed against tenant)**
+- [x] `saviynt-config/05-aws-iam-pam-endpoint.md` — `AWS-IAM-Endpoint` SS+Endpoint; `pulumi-deployer` IAM user; PAM onboarding with rotate-on-checkin policy; end-to-end /checkout-aws → /checkin-aws test **(written 2026-05-11; not yet executed against tenant)**
 - [ ] `saviynt-config/00-OVERVIEW.md` — *not written yet, optional*
-- [ ] `saviynt-config/04-pam-endpoint.md` — endpoint for AWS IAM and EC2 instances *(Phase 5 prerequisite)*
-- [ ] `saviynt-config/05-service-account.md` — broker SA setup with rotation policy *(Phase 5 prerequisite)*
-- [ ] `saviynt-config/06-test-checklist.md` — pre-demo validation steps
+- [ ] `saviynt-config/06-aws-ec2-nhi-endpoint.md` — EC2 instance NHI registration *(deferred — broker push-based for v1, can stay governance-only)*
+- [ ] `saviynt-config/07-test-checklist.md` — pre-demo validation steps
 
 ### Phase 5 — Local Testing & Saviynt Endpoint Confirmation ⏳
 **Location:** `scripts/`

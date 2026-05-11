@@ -4,7 +4,7 @@
 
 ## Project State: 🟢 IGA CONFIG VERIFIED — Demo flow proven end-to-end via API. Broker implementation next.
 
-Last updated: 2026-05-08 — IGA config Section A/B/C verified against tenant; both demo paths (dev auto-approve, prod manual approve via wes-approver) confirmed working with real `createrequest` → `fetchRequestApprovalDetails` → UI approval → `getEntDetailsforUsers` cycles.
+Last updated: 2026-05-11 — IGA config Section A/B/C verified against tenant; both demo paths (dev auto-approve, prod manual approve via wes-approver) confirmed working. `automatedProvisioning: true` on the SS verified to auto-close provisioning tasks on approval — broker doesn't need updateTasks logic. SS-level Access Remove Workflow bound to OOB auto-approval workflow; REMOVE createrequest works cleanly for demo state resets.
 
 ---
 
@@ -180,7 +180,7 @@ Pipeline calls broker /register-nhi → vaults credentials in Saviynt PAM
 | Exact Saviynt endpoint paths for createRequest, fetchRequestApprovalDetails, getEntDetailsforUsers, getAccounts | ✅ Verified in tenant | All under `/ECM/api/v5/`. Captured in `saviynt-config/03-roles-and-users.md` settings.py block. |
 | createrequest payload shape | ✅ Verified | `entitlement` is array-of-objects; `accountname` required; `requestor` must equal beneficiary for manual approval to fire |
 | Workflow architecture (per-type vs SS-level + If-Else) | ✅ Resolved | One SS-level workflow with If-Else on `entitlement.entitlementtypekey.entitlementname` is what actually works; per-type bindings don't fire for entitlement add requests in this tenant |
-| Auto-completion of provisioning tasks for disconnected endpoint | ⚠️ Open | `instantprovision: true` insufficient. Plan: broker calls `updateTasks` to close task itself after detecting APPROVED. Optional: try `automatedProvisioning: true` on SS. |
+| Auto-completion of provisioning tasks for disconnected endpoint | ✅ Resolved | `automatedProvisioning: true` on the SS auto-closes tasks on approval (verified 2026-05-11). Broker does NOT need updateTasks logic. |
 | Custom property mapping for NHI metadata (which customproperty fields hold owner, env, etc.) | ⚠️ To decide in Phase 4 PAM section | Will document in `saviynt-config/04-pam-endpoint.md` (not yet written) |
 | Whether to add a quarterly NHI certification campaign as a Phase 7 extension | 💭 Optional | Strong story but adds Saviynt config complexity |
 | AWS region failover (us-east-1 only?) | ✅ us-east-1 only | Confirmed by user |
@@ -221,8 +221,8 @@ This section records what's actually in the tenant after verification testing. I
 
 **Security System:** `Pulumi-Pipeline-AWS`
 - `accessAddWorkflow`: `WF-PulumiPipeline-AddAccess` (one workflow, branches inside via If-Else)
-- `accessRemoveWorkflow`: blank (or set to a simple auto-approve to allow easy reset between demo runs)
-- `automatedProvisioning`: false ← *try true to test auto-completion of tasks*
+- `accessRemoveWorkflow`: OOB auto-approval workflow (no human gate on removals — encourages least-privilege)
+- `automatedProvisioning`: **true** (verified auto-closes provisioning tasks on approval; broker doesn't need updateTasks)
 - `useopenconnector`: true
 - `instantprovision`: true
 
@@ -258,10 +258,11 @@ This section records what's actually in the tenant after verification testing. I
 - `wes-approver` (userKey 3452) — approver; SAV Role: ROLE_ADMIN; no account on the endpoint (not required)
 
 **Verified test results:**
-- ✅ Dev path: createrequest for `EC2Deploy-Dev` with `requestor: igaadmin` → auto-approves immediately → after manual task close, entitlement appears on wes-dev
-- ✅ Prod path: createrequest for `EC2Deploy-Prod` with `requestor: wes-dev` (NOT igaadmin) → PENDING with assignee `wes-approver` → wes-approver approves in UI → APPROVED → manual task close → entitlement on wes-dev
+- ✅ Dev path: createrequest for `EC2Deploy-Dev` with `requestor: igaadmin` → auto-approves via SS workflow's If-Else False branch → entitlement appears on wes-dev (task auto-closes via `automatedProvisioning`)
+- ✅ Prod path: createrequest for `EC2Deploy-Prod` with `requestor: wes-dev` (NOT igaadmin) → PENDING with assignee `wes-approver` → wes-approver approves in UI → APPROVED → entitlement on wes-dev (task auto-closes via `automatedProvisioning`)
+- ✅ Remove path: REMOVE createrequest with `requestor: igaadmin` → SS-level Access Remove Workflow (OOB auto-approval) auto-approves → entitlement removed (task auto-closes)
 
 **Known follow-ups for Phase 5+:**
-1. Auto-completion of provisioning tasks (currently manual; broker should call `updateTasks` API)
-2. Reset script: revoke EC2Deploy-Prod between demo runs
-3. NHI registration custom-property mapping (Phase 4 PAM section, not yet written)
+1. Reset script / docs entry: REMOVE createrequest snippet for revoking EC2Deploy-Prod between demo runs (working payload captured in `saviynt-config/03-roles-and-users.md`)
+2. NHI registration custom-property mapping (Phase 4 PAM section, not yet written)
+3. Decision on JIT pattern: should the broker call REMOVE after a successful deploy to demonstrate just-in-time access? (Not required for demo v1; future enhancement)

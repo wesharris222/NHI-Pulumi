@@ -10,11 +10,14 @@
 ## Key facts about this project
 - Tenant: https://eic-poc-wesharris.saviyntcloud.com
 - Saviynt EIC Amsterdam GA release
-- Bootstrap identity: igaadmin (broker SA AND prod approver in v1)
+- Bootstrap identity: igaadmin (broker SA)
+- Manual-approval approver: wes-approver (ROLE_ADMIN, separate from broker SA — required because requestor=approver triggers an auto-approve trap)
 - Beneficiary user: wes-dev
 - Application: Pulumi-Pipeline-AWS (Security System + Endpoint, same name)
-- Entitlement Types: `EntDev` (display `Pipeline Access - Dev`, Add Workflow `WF-EC2Deploy-Dev-AutoApprove`) and `EntProd` (display `Pipeline Access - Prod`, Add Workflow `WF-EC2Deploy-Prod-ManualApprove`). Amsterdam binds workflows at the type level, not the entitlement level.
-- Entitlements: EC2Deploy-Dev (under EntDev, auto-approve), EC2Deploy-Prod (under EntProd, manual)
+- Entitlement Types: `EntDev` (display `Pipeline Access - Dev`) and `EntProd` (display `Pipeline Access - Prod`). Per-type workflow bindings are decorative in this tenant — workflow resolution happens at the SS level.
+- Entitlements: EC2Deploy-Dev (under EntDev) and EC2Deploy-Prod (under EntProd). Dev is pre-assigned to wes-dev as standing access; prod is the demo's manual-approval trigger.
+- Workflows: one SS-level Add workflow (`WF-PulumiPipeline-AddAccess`) with If-Else branching on entitlement type — True branch routes prod to wes-approver, False auto-approves everything else. OOB auto-approve workflow on SS-level Remove (no human gate; removals encouraged for least-privilege hygiene).
+- SS-level toggle `automatedProvisioning: true` is ON — provisioning tasks auto-close on approval (verified). Broker does NOT need updateTasks logic.
 
 ## Verified API endpoints — Amsterdam GA
 The saviynt-config/03-roles-and-users.md file has the full settings.py block.
@@ -41,13 +44,10 @@ Currently in Phase 1 — Broker. See PROGRESS.md for the checklist.
 - **`Requestable` flag lives only at the Endpoint level** in this tenant. No toggle on Entitlement Type or Entitlement record (despite older Saviynt docs suggesting otherwise).
 - **Beneficiary user must have a stub account on the endpoint** before they can see entitlements in the Saviynt request catalog UI. Account must be mapped (non-empty `userKey`/`username` after creation).
 
-## Disconnected endpoint provisioning
-Pulumi-Pipeline-AWS has no downstream connector. After approval, provisioning tasks remain Open and don't link the entitlement to the user. Three solutions:
-1. **Broker calls `updateTasks` to close the task** after seeing APPROVED (recommended).
-2. Toggle SS `automatedProvisioning: true` (try this — may auto-close on approval).
-3. Manually complete the task in Admin → Tasks (not viable for the demo).
+## Disconnected endpoint provisioning — RESOLVED
+Pulumi-Pipeline-AWS has no downstream connector. With `automatedProvisioning: true` on the Security System (verified 2026-05-11), provisioning tasks auto-close on approval and the entitlement assignment lands immediately. **The broker does NOT need to call `updateTasks` or any task-management API.** `/preflight/status` flow: poll `fetchRequestApprovalDetails` until APPROVED → optionally poll `getEntDetailsforUsers` once to confirm the entitlement is reflected → return approved.
 
-WSRETRY does NOT help disconnected endpoints — it's for retrying *failed* connector calls, of which there are none here.
+If `automatedProvisioning` is ever toggled off, fallback is manual completion via Admin → Tasks. WSRETRY does NOT help disconnected endpoints — it's for retrying *failed* connector calls, of which there are none here.
 
 ## Reference file
 The original validate_secret.py (in conversation history, not in repo) contains

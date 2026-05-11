@@ -342,8 +342,8 @@ case "${1:-full}" in
     wait)
         [[ -n "${2:-}" ]] || fail "usage: $0 wait <requestkey>"
         TOKEN=$(get_token)
-        info "Waiting for approval on $2  (polling every 10s, up to 10 minutes)"
-        STATUS=$(wait_for_approval "$TOKEN" "$2")
+        info "Waiting for approval on $2  (polling every 5s, up to 10 minutes)"
+        STATUS=$(wait_for_approval "$TOKEN" "$2" 5 120)
         case "$STATUS" in
             APPROVED) pass "status: APPROVED" ;;
             REJECTED) fail "status: REJECTED" ;;
@@ -397,8 +397,8 @@ case "${1:-full}" in
         info "     (if you need to step away, abort with Ctrl+C and resume with:  $0 wait $KEY)"
         read -r -p "Press Enter once approved..." _
 
-        info "Polling for APPROVED (with retry on transient errors)"
-        S2=$(wait_for_approval "$TOKEN" "$KEY" 5 12)
+        info "Polling for APPROVED every 5s (with retry on transient errors, up to 5 minutes)"
+        S2=$(wait_for_approval "$TOKEN" "$KEY" 5 60)
         case "$S2" in
             APPROVED) pass "status=$S2" ;;
             REJECTED) fail "request was rejected" ;;

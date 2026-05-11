@@ -27,7 +27,8 @@
 #   scripts/test_iga_flow.sh           # full sequence, pauses for UI approve
 #   scripts/test_iga_flow.sh check     # just the two getEntDetailsforUsers checks
 #   scripts/test_iga_flow.sh request   # check + createrequest + first poll
-#   scripts/test_iga_flow.sh poll <requestkey>   # poll a specific request
+#   scripts/test_iga_flow.sh poll <requestkey>   # one-shot poll (with retry on transient err)
+#   scripts/test_iga_flow.sh wait <requestkey>   # poll until APPROVED/REJECTED/TIMEOUT
 #   scripts/test_iga_flow.sh cancel <requestkey> # cancel a pending request
 #   scripts/test_iga_flow.sh remove              # REMOVE EC2Deploy-Prod from wes-dev (post-grant reset)
 # =============================================================================
@@ -201,10 +202,12 @@ submit_remove() {
 }
 
 # -----------------------------------------------------------------------------
-# fetchRequestApprovalDetails
-# Echoes the aggregated status on stdout: PENDING/APPROVED/REJECTED/UNKNOWN
+# fetchRequestApprovalDetails — single call
+# Echoes the aggregated status on stdout: PENDING/APPROVED/REJECTED/UNKNOWN/ERROR
+# ERROR = Saviynt returned the transient "An unexpected error occured" — caller
+#         should retry. UNKNOWN = success response but no statuses found.
 # -----------------------------------------------------------------------------
-poll_status() {
+poll_status_once() {
     local token="$1" key="$2"
     local resp
     resp=$(curl -sS -X POST "$BASE/fetchRequestApprovalDetails" \
@@ -212,6 +215,16 @@ poll_status() {
         -H 'Content-Type: application/json' \
         -d "$(jq -nc --arg k "$key" --arg u "$APPROVER" '{requestKey:$k, userName:$u}')")
     echo "$resp" | jq '.' >&2
+
+    # Detect Saviynt's transient "try again later" error so caller can retry.
+    local err_msg err_code
+    err_msg=$(echo "$resp" | jq -r '.msg // empty' | tr '[:upper:]' '[:lower:]')
+    err_code=$(echo "$resp" | jq -r '.errorcode // .errorCode // empty')
+    if [[ "$err_code" == "1" && "$err_msg" == *"unexpected error"* ]]; then
+        echo "ERROR"
+        return
+    fi
+
     # Pull every approvalstatus from modifyTasks/tasksList
     local statuses
     statuses=$(echo "$resp" \
@@ -227,6 +240,54 @@ poll_status() {
     elif echo "$upper" | grep -qvE 'APPROVED|COMPLETE|COMPLETED'; then echo "PENDING"
     else echo "APPROVED"
     fi
+}
+
+# -----------------------------------------------------------------------------
+# poll_status — retries on the transient ERROR response (Saviynt sometimes
+# takes a few seconds to register a new request or fresh approval before
+# fetchRequestApprovalDetails returns clean data).
+# -----------------------------------------------------------------------------
+poll_status() {
+    local token="$1" key="$2"
+    local attempt=0 max=4 status
+    while (( attempt < max )); do
+        attempt=$((attempt + 1))
+        status=$(poll_status_once "$token" "$key")
+        if [[ "$status" != "ERROR" ]]; then
+            echo "$status"
+            return
+        fi
+        if (( attempt < max )); then
+            info "fetchRequestApprovalDetails transient error (attempt $attempt/$max) — retrying in 3s" >&2
+            sleep 3
+        fi
+    done
+    echo "ERROR"
+}
+
+# -----------------------------------------------------------------------------
+# wait_for_approval — poll until APPROVED or REJECTED or timeout
+# Usage: wait_for_approval <token> <key> [interval_seconds] [max_attempts]
+# Echoes the terminal status (APPROVED / REJECTED / TIMEOUT).
+# -----------------------------------------------------------------------------
+wait_for_approval() {
+    local token="$1" key="$2" interval="${3:-10}" max_attempts="${4:-60}"
+    local attempt=0 status
+    while (( attempt < max_attempts )); do
+        attempt=$((attempt + 1))
+        status=$(poll_status "$token" "$key")
+        case "$status" in
+            APPROVED|REJECTED)
+                echo "$status"
+                return
+                ;;
+            *)
+                info "Waiting for approval (attempt $attempt/$max_attempts, status=$status) — sleeping ${interval}s" >&2
+                sleep "$interval"
+                ;;
+        esac
+    done
+    echo "TIMEOUT"
 }
 
 # -----------------------------------------------------------------------------
@@ -264,15 +325,34 @@ case "${1:-full}" in
         info "Submit request: $BENEFICIARY for $ENT_PROD  (requestor=$REQUESTOR)"
         KEY=$(submit_request "$TOKEN" "$BENEFICIARY" "$ENT_PROD" "$ENT_TYPE_PROD" \
             "test_iga_flow.sh — prod approval test")
+        info "Settle delay (Saviynt sometimes needs a few seconds to register the new request)"
+        sleep 3
         info "Initial poll  (userName=$APPROVER)"
         STATUS=$(poll_status "$TOKEN" "$KEY")
         pass "initial status: $STATUS  (requestkey=$KEY)"
+        echo
+        info "To wait for approval:  $0 wait $KEY"
         ;;
     poll)
         [[ -n "${2:-}" ]] || fail "usage: $0 poll <requestkey>"
         TOKEN=$(get_token)
         STATUS=$(poll_status "$TOKEN" "$2")
         pass "status: $STATUS"
+        ;;
+    wait)
+        [[ -n "${2:-}" ]] || fail "usage: $0 wait <requestkey>"
+        TOKEN=$(get_token)
+        info "Waiting for approval on $2  (polling every 10s, up to 10 minutes)"
+        STATUS=$(wait_for_approval "$TOKEN" "$2")
+        case "$STATUS" in
+            APPROVED) pass "status: APPROVED" ;;
+            REJECTED) fail "status: REJECTED" ;;
+            TIMEOUT)  fail "timeout waiting for approval" ;;
+            *)        fail "unexpected terminal status: $STATUS" ;;
+        esac
+        info "Verify entitlement now visible on user"
+        check_entitlement "$TOKEN" "$BENEFICIARY" "$ENT_PROD" "$ENT_TYPE_PROD" \
+            || info "Entitlement not yet visible — provisioning task may still be processing"
         ;;
     cancel)
         [[ -n "${2:-}" ]] || fail "usage: $0 cancel <requestkey>"
@@ -304,6 +384,8 @@ case "${1:-full}" in
         info "Submit prod request  (requestor=$REQUESTOR — MUST = beneficiary)"
         KEY=$(submit_request "$TOKEN" "$BENEFICIARY" "$ENT_PROD" "$ENT_TYPE_PROD" \
             "test_iga_flow.sh — full flow")
+        info "Settle delay before first poll (Saviynt sometimes needs a beat)"
+        sleep 3
         info "Poll (expect PENDING)"
         S1=$(poll_status "$TOKEN" "$KEY")
         [[ "$S1" == "PENDING" || "$S1" == "UNKNOWN" ]] \
@@ -312,12 +394,17 @@ case "${1:-full}" in
 
         echo
         info "===> MANUAL STEP: Log into Saviynt UI as $APPROVER and APPROVE request $KEY"
+        info "     (if you need to step away, abort with Ctrl+C and resume with:  $0 wait $KEY)"
         read -r -p "Press Enter once approved..." _
 
-        info "Poll again (expect APPROVED)"
-        S2=$(poll_status "$TOKEN" "$KEY")
-        [[ "$S2" == "APPROVED" ]] || fail "expected APPROVED, got $S2"
-        pass "status=$S2"
+        info "Polling for APPROVED (with retry on transient errors)"
+        S2=$(wait_for_approval "$TOKEN" "$KEY" 5 12)
+        case "$S2" in
+            APPROVED) pass "status=$S2" ;;
+            REJECTED) fail "request was rejected" ;;
+            TIMEOUT)  fail "timed out waiting for APPROVED — try '$0 wait $KEY' to keep polling" ;;
+            *)        fail "unexpected terminal status: $S2" ;;
+        esac
 
         info "Verify entitlement now visible on user"
         check_entitlement "$TOKEN" "$BENEFICIARY" "$ENT_PROD" "$ENT_TYPE_PROD" \
@@ -328,7 +415,7 @@ case "${1:-full}" in
         pass "full flow complete"
         ;;
     *)
-        echo "usage: $0 [full|check|request|poll <key>|cancel <key>|remove]" >&2
+        echo "usage: $0 [full|check|request|poll <key>|wait <key>|cancel <key>|remove]" >&2
         exit 2
         ;;
 esac

@@ -9,7 +9,7 @@
 
 ## Prerequisites
 
-1. **A customer AWS account.** Free tier is fine; for the demo we recommend a fresh AWS account so blast radius is zero. Region: `us-east-1` (matches the rest of the demo per `PROGRESS.md`).
+1. **A customer AWS account.** Free tier is fine; for the demo we recommend a fresh AWS account so blast radius is zero. Region: `us-east-2` (matches the rest of the demo per `PROGRESS.md`).
 2. **AWS Console admin access** to that account (root user or an IAM admin user).
 3. **Saviynt's master AWS account ID** (12-digit). This identifies which Saviynt instance is allowed to assume the role you'll create. Two ways to get it:
    - **Preferred:** Log into Saviynt as `igaadmin` → Admin → Settings → **Configuration Files** → open `externalconfig.properties` → read the value of `aws.saas.accountid`. Copy the 12 digits.
@@ -44,7 +44,7 @@ This creates the cross-account IAM Role with all permissions Saviynt needs.
 ### Click-by-click
 
 1. Log into the **AWS Console** as admin in your customer AWS account.
-2. Switch region to **us-east-1** (top-right region selector). CloudFormation stacks are region-scoped; the role itself is global but it's tidier to do this in our designated demo region.
+2. Switch region to **us-east-2** (top-right region selector). CloudFormation stacks are region-scoped; the role itself is global but it's tidier to do this in our designated demo region.
 3. Navigate to **CloudFormation** (search in the top services bar).
 4. Click **Create stack** → **With new resources (standard)**.
 5. On the **Create stack** wizard:
@@ -127,7 +127,7 @@ This is the Saviynt-side wiring that uses the role you just created.
 | **AWS_STACK_ROLE_NAME** | Leave blank | Optional when `aws.saas.rolearn` is set in externalconfig (it is for cloud-hosted Saviynt) |
 | **EXTERNAL ID** | Same External ID string you typed into the CFN stack | Must match exactly, character-for-character |
 | **PULL_GOV_REGION_ONLY** | `No` | We're on AWS PublicCloud, not GovCloud |
-| **DEFAULT_REGION** | `us-east-1` | Matches the rest of the demo |
+| **DEFAULT_REGION** | `us-east-2` | Matches the rest of the demo |
 | **CREATEUSERS** | `NO` | We don't want Saviynt to auto-create Saviynt-side identities from imported IAM users |
 
 5. Scroll to the bottom. Click **Save and Test Connection**.
@@ -176,9 +176,24 @@ The broker doesn't talk to AWS directly — it goes through Saviynt — so no AW
 | **`PULL_GOV_REGION_ONLY` field not visible** | UI version differs | Look for it under "Connection Attributes" or "Connection Properties" expandable section |
 | **Saviynt master AWS account ID hard to find** | `externalconfig.properties` is admin-restricted and may not be visible in the tenant UI | Open a Saviynt support ticket. The CloudOps team will provide it within hours. |
 | **Trust policy in CFN role is missing `sts:ExternalId` condition** | Used the wrong CF template (one that doesn't take External ID parameter) | Re-create stack with the IGA+PAM template; the External ID is mandatory for cross-account roles |
-| **"Region not supported"** when saving connection | DEFAULT_REGION doesn't match a region the AWS connector supports | Use `us-east-1`. China regions (`cn-*`) are explicitly NOT supported per the Saviynt guide. |
+| **"Region not supported"** when saving connection | DEFAULT_REGION doesn't match a region the AWS connector supports | Use `us-east-2`. China regions (`cn-*`) are explicitly NOT supported per the Saviynt guide. |
 
 ---
+
+## AWS Cost & Free Tier Notes
+
+Nothing in Section D costs money on its own. Specifically:
+
+| Resource | Cost | Notes |
+|---|---|---|
+| CloudFormation Stack | $0 | No charge for stacks themselves; only the resources they create |
+| IAM Role (created by the Stack) | $0 | IAM is always free |
+| IAM Policy attachments | $0 | Free |
+| STS AssumeRole calls (Saviynt → your account) | $0 | Free |
+
+⚠️ **Don't pick the "Real Time Monitoring" variants** from the template table. Those create CloudWatch event rules + SQS queues that have free-tier caps (10 metrics, 1M API requests/month, etc.). For a demo run-and-tear-down pattern you'd stay under, but they add operational surface area for zero demo value here. **Security Analyzer + IGA + PAM** is the right choice — permissions only, no infrastructure.
+
+**Use a fresh AWS account** if you want the full 12-month free tier on the downstream EC2 deploys (which happen in Pulumi, not here). If you reuse an account older than 12 months, t2.micro starts at ~$8.50/month and the cost story changes — though `pulumi destroy` after each demo run keeps it cents-per-day.
 
 ## What's next
 

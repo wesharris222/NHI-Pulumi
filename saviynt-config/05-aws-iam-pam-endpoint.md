@@ -132,7 +132,7 @@ ec2:CreateKeyPair, ec2:DeleteKeyPair, ec2:DescribeKeyPairs,
 ec2:CreateSecurityGroup, ec2:DeleteSecurityGroup, ec2:DescribeSecurityGroups,
 ec2:AuthorizeSecurityGroupIngress, ec2:CreateTags, ec2:DescribeImages
 ```
-…limited to `us-east-1`. This is the demo-honest version of "Pulumi runs only what it needs to". Slightly more setup; not required for v1.
+…limited to `us-east-2`. This is the demo-honest version of "Pulumi runs only what it needs to". Slightly more setup; not required for v1.
 
 ---
 
@@ -347,6 +347,49 @@ That's a follow-up; not blocking. The manual curl test in E.7 proves the broker 
 | Provisioning task lingers Open after checkout | `automatedProvisioning` false on the Security System | Set to true (E.1 step 4) and re-test |
 
 ---
+
+## AWS Cost & Free Tier Notes
+
+Everything in Section E (IAM-side) is free:
+
+| Resource | Cost | Notes |
+|---|---|---|
+| IAM User `pulumi-deployer` | $0 | IAM is always free |
+| IAM Policy attachment (`AmazonEC2FullAccess` or scoped variant) | $0 | Free |
+| IAM access keys (created at checkout, deleted at checkin) | $0 | No charge per key or for IAM API calls |
+| Saviynt's IAM `CreateAccessKey` / `DeleteAccessKey` calls | $0 | Free |
+
+The cost surface is what `pulumi-deployer` *creates* downstream (Pulumi → EC2). That's covered in `pulumi/` and gets billed against your AWS free tier:
+
+| Resource Pulumi creates | Free tier | After 12 months |
+|---|---|---|
+| EC2 t2.micro (Ubuntu) | 750 hr/mo for 12 months | ~$8.50/mo if always-on |
+| EBS volume 8 GB (default) | 30 GB-mo free | ~$0.80/mo if always-on |
+| Public IPv4 address | ⚠️ NOT free even on free tier | $0.005/hr ($3.60/mo if always-on) |
+| Default VPC, security group, key pair | $0 always | $0 |
+| Data transfer out (demo SSH session) | 100 GB/mo free tier | $0.09/GB |
+
+**Public IPv4 is the only line-item that costs from day 1**, but at ~$0.012/hour total demo run time it's pennies if you `pulumi destroy` after each run. If you want zero AWS-cost demos, swap SSH-to-EC2 for AWS Systems Manager Session Manager (no public IP needed) — extra setup, separate doc.
+
+### Recommendation: scope `pulumi-deployer`'s policy
+
+The `AmazonEC2FullAccess` policy in E.3 is wide. For demo cleanliness (and to lock down what Pulumi-via-`pulumi-deployer` could create even by accident), use the scoped policy from E.3's "Optional: scoped-down policy" section instead. Limit to:
+
+- `ec2:RunInstances` with InstanceType condition restricted to `t2.micro`, `t3.micro`
+- `ec2:TerminateInstances`, `ec2:DescribeInstances`
+- `ec2:CreateKeyPair`, `ec2:DeleteKeyPair`, `ec2:DescribeKeyPairs`
+- `ec2:CreateSecurityGroup`, `ec2:DeleteSecurityGroup`, `ec2:DescribeSecurityGroups`, `ec2:AuthorizeSecurityGroupIngress`
+- `ec2:CreateTags`, `ec2:DescribeImages`
+
+This makes the "what could go wrong if a Pulumi bug ran wild" answer trivially boundable to the free tier shape. Recommended for the final demo recording even if you start with EC2FullAccess for iteration speed.
+
+### Demo cleanup checklist (between runs)
+
+1. `pulumi destroy --stack dev` (and `--stack prod` if you ran prod) — terminates EC2, deletes SG/keypair/etc.
+2. Confirm in AWS Console → EC2 → Instances filtered by State=Running → should be empty.
+3. Saviynt → revoke any leftover entitlements (`scripts/test_iga_flow.sh remove`).
+
+Skipping the destroy step is the single biggest accidental-cost risk during iteration.
 
 ## Settings to capture in broker/settings.py
 

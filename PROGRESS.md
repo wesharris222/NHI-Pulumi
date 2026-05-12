@@ -36,7 +36,7 @@ Returns: approval decision, AWS creds, NHI registration confirmation
 Pulumi (Python, run by GitHub Actions)
   │ uses AWS creds checked out from Saviynt PAM
   ▼
-AWS us-east-1 (free tier t2.micro Ubuntu)
+AWS us-east-2 (free tier t2.micro Ubuntu)
   │ creates EC2 + keypair + OS user
   ▼
 Outputs: instance_id, public_ip, ssh_private_key, os_username, os_password
@@ -126,7 +126,7 @@ Pipeline calls broker /register-nhi → vaults credentials in Saviynt PAM
 - SSH keypair generated locally with `cryptography` library, public half registered with EC2 via `aws.ec2.KeyPair`
 - OS user created via cloud-init user-data with random password (also output)
 - Stack outputs: `instance_id`, `public_ip`, `ssh_private_key` (marked secret), `os_username`, `os_password` (marked secret)
-- Free-tier compliant: t2.micro, Ubuntu 22.04 LTS AMI in us-east-1
+- Free-tier compliant: t2.micro, Ubuntu 22.04 LTS AMI in us-east-2
 - Security group: SSH (22) from anywhere for demo simplicity (call this out in talk track as a demo simplification)
 
 ### Phase 3 — GitHub Actions Workflow ⏳
@@ -194,7 +194,7 @@ Pipeline calls broker /register-nhi → vaults credentials in Saviynt PAM
 | Auto-completion of provisioning tasks for disconnected endpoint | ✅ Resolved | `automatedProvisioning: true` on the SS auto-closes tasks on approval (verified 2026-05-11). Broker does NOT need updateTasks logic. |
 | Custom property mapping for NHI metadata (which customproperty fields hold owner, env, etc.) | ⚠️ To decide in Phase 4 PAM section | Will document in `saviynt-config/04-pam-endpoint.md` (not yet written) |
 | Whether to add a quarterly NHI certification campaign as a Phase 7 extension | 💭 Optional | Strong story but adds Saviynt config complexity |
-| AWS region failover (us-east-1 only?) | ✅ us-east-1 only | Confirmed by user |
+| AWS region failover (us-east-2 only?) | ✅ us-east-2 only | Confirmed by user |
 
 ---
 

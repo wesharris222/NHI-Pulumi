@@ -35,7 +35,7 @@ See [`PROGRESS.md`](./PROGRESS.md) for current build state and next steps.
 - **Saviynt EIC** — IGA + PAM (existing tenant)
 - **GitHub** (free tier) — repo + Actions
 - **Pulumi Cloud** (free individual tier) — IaC orchestration
-- **AWS** (free tier) — t2.micro EC2 in us-east-1
+- **AWS** (free tier) — t2.micro EC2 in us-east-2
 - **Ubuntu VM** — runs the FastAPI broker and a self-hosted GitHub Actions runner
 - **Python 3.11+** — broker, Pulumi program, tests
 - **FastAPI + uvicorn** — broker framework

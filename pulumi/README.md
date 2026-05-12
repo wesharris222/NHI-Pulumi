@@ -4,7 +4,7 @@
 
 ## What goes here
 
-A Pulumi Python program that deploys a t2.micro Ubuntu EC2 instance in us-east-1 with a generated SSH keypair and a randomly-passworded OS user. Outputs are consumed by the GitHub Actions workflow and forwarded to the broker for Saviynt PAM vaulting.
+A Pulumi Python program that deploys a t2.micro Ubuntu EC2 instance in us-east-2 with a generated SSH keypair and a randomly-passworded OS user. Outputs are consumed by the GitHub Actions workflow and forwarded to the broker for Saviynt PAM vaulting.
 
 ## Files to create (Phase 2)
 
@@ -30,7 +30,7 @@ A Pulumi Python program that deploys a t2.micro Ubuntu EC2 instance in us-east-1
 
 - SSH key generated via `cryptography.hazmat` library, public half registered with EC2 via `aws.ec2.KeyPair`
 - OS user created via cloud-init `user-data` with random password
-- Free-tier compliant: t2.micro, Ubuntu 22.04 LTS in us-east-1
+- Free-tier compliant: t2.micro, Ubuntu 22.04 LTS in us-east-2
 - Security group: SSH (22) from anywhere — DEMO SIMPLIFICATION, call out in talk track
 - AWS credentials read from `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars (set by the GitHub workflow after broker checkout)
 
@@ -45,7 +45,7 @@ pip install -r requirements.txt
 # AWS creds must be in env (in production, from broker checkout)
 export AWS_ACCESS_KEY_ID=...
 export AWS_SECRET_ACCESS_KEY=...
-export AWS_DEFAULT_REGION=us-east-1
+export AWS_DEFAULT_REGION=us-east-2
 
 pulumi stack init dev    # or prod
 pulumi up

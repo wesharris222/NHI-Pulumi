@@ -1,183 +1,193 @@
-# 04 — AWS Connection (Saviynt → Customer AWS via IAM User + AssumeRole)
+# 04 — AWS Cross-Account Trust (Saviynt ↔ Customer AWS)
 
-> **Goal:** Stand up the AWS-side IAM scaffolding (an IAM user + a role with PAM permissions) and connect Saviynt to it. Saviynt authenticates as the IAM user using static access keys, then calls `sts:AssumeRole` to take on the role's permissions to perform IAM/PAM operations — create/delete IAM users, generate and rotate access keys, attach policies. This is the foundation for every downstream PAM operation in the demo; **`05-aws-iam-pam-endpoint.md`** depends on this being complete.
+> **Goal:** Establish trust between the Saviynt EIC tenant (hosted in Saviynt's own AWS account) and your customer AWS account using AWS's **cross-account IAM role** pattern. Saviynt's EC2 IAM role calls `sts:AssumeRole` against a role you create in your account; AWS grants short-lived temporary credentials; Saviynt uses those to perform IAM/PAM operations. No long-lived AWS access keys live between the two systems — Saviynt's identity is the EC2 IAM role its instance runs as, attested by AWS's instance metadata service.
+>
+> This is the foundation for every downstream PAM operation in the demo; **`05-aws-iam-pam-endpoint.md`** depends on this being complete.
 
-> **Why this pattern (not cross-account-role-with-External-ID):** The "Security Analyzer + IGA + PAM" CloudFormation template Saviynt provides creates an IAM user + role in your account. Saviynt's tenant UI exposes both auth patterns (cross-account assume *and* IAM-user-with-keys); the template ships with the IAM-user pattern, so we use that. Tradeoff vs. cross-account: one set of long-lived AWS access keys lives in Saviynt PAM as the bootstrap SA credential, alongside the Saviynt SA password already in `broker/.env`. Same trust posture; honest framing already in the talk track's irreducible-bootstrap-secrets list.
+> **Why this pattern (not IAM-user-with-keys):** Saviynt's `aws.cloud.deployment` flag is `true` for our tenant (it's running on AWS), which means the AWS Connection's backend processing path **only honors the cross-account fields** (`AWS_ACCOUNT_ID`, `Cross Account Role ARN`, `External ID`). The UI also exposes `ACCESS KEY ID`, `SECRET ACCESS KEY`, and `Role ARN` fields — those are for non-cloud Saviynt deployments and are silently ignored here even if populated. The CloudFormation template Saviynt provides creates an IAM user + role with intra-account trust by default; we deploy it as-is, then **modify the role's trust policy** to a cross-account trust against Saviynt's master account.
 
 ## Reference
 
-- Saviynt AWS Integration Guide (PDF in repo: `aws_integration_guide_configuring_the_integration_(aws_cloud)_2026-05-11-12-04-02.pdf`).
-- The actual "Security Analyzer + IGA + PAM" CloudFormation template (shared in conversation; downloadable from the PDF's "Click to Download" link).
+- Saviynt AWS Integration Guide (PDF in repo: `aws_integration_guide_configuring_the_integration_(aws_cloud)_2026-05-11-12-04-02.pdf`). Sections: "Preparing for Integration (AWS Cloud)", "Option 1: Saviynt Identity Cloud Trusts each AWS Account", "Selecting Stack Templates", "Creating a Connection using the Connection Template".
+- Page 38 of that guide has the decisive paragraph: the `update externalconnectiontype` SQL block shows that when `aws.cloud.deployment=true`, the connection's `ATTRIBUTEKEY` list includes `CROSS_ACCOUNT_ROLE_ARN` but **not** `AWS_ACCESS_KEY` / `AWS_ACCESS_SECRET_PASSWORD`. That's why the access-key fields are ignored.
 
 ## Prerequisites
 
 1. **A customer AWS account.** Free tier is fine; for the demo we recommend a fresh AWS account so blast radius is zero. Region: `us-east-2` (matches the rest of the demo per `PROGRESS.md`).
 2. **AWS Console admin access** to that account (root user or an IAM admin user).
-3. **The "Security Analyzer + IGA + PAM" CloudFormation template** — either the S3 URL from the Saviynt AWS Integration Guide table's "Click to Download" link, OR the local copy of the template JSON. The template's resources are: one IAM user (`SaviyntUser`), one IAM role (`SaviyntAssumeRole`), and four managed policies that wire them together.
-
-> ⚠️ The template you're using has **one parameter only: `IAMUserName`**. It does NOT take `MasterAccID` or `EXTERNAL_ID`. If your template version has those parameters, you've got a different (cross-account) variant — pause and tell me; we'd switch the doc back to the cross-account pattern.
+3. **Saviynt's `aws.saas.rolearn` value** — the full ARN of the IAM role attached to Saviynt's EC2 instance in Saviynt's AWS account. This is what your role's trust policy will list as the trusted principal. Find it:
+   - Log into Saviynt as `igaadmin` → Admin → Settings → **Configuration Files** → open `externalconfig.properties` → read the value of `aws.saas.rolearn`.
+   - Format: `arn:aws:iam::<Saviynt-master-account-id>:role/<some-saviynt-role-name>`.
+   - ⚠️ **Just the ARN value, not the `aws.saas.rolearn=` prefix.** AWS rejects the trust policy if you paste the property-file format including the key name.
+4. **The "Security Analyzer + IGA + PAM" CloudFormation template** — either the S3 URL from the AWS Integration Guide's template table, OR the local JSON. The template creates: one IAM user, one IAM role, four managed policies. We'll deploy it, then keep only the role + three of its policies (delete the rest as cleanup).
+5. **An External ID of your choice** — any short alphanumeric string Saviynt will pass when assuming the role, to satisfy AWS's confused-deputy protection. Pick something distinctive, e.g., `pulumi-demo-2026-05-12`. Copy it to your scratch note — you'll paste it into the trust policy *and* Saviynt's Connection.
+6. **Confirm tenant deployment mode:** in `externalconfig.properties`, verify `aws.cloud.depoyment=true` (sic — the typo is in Saviynt's config). If it's `false`, the IAM-user pattern would apply instead; consult an earlier revision of this doc in `git log`.
 
 ---
 
 ## D.1 Decide on naming and capture values you'll reuse
 
-Open a scratch note and fill these in as you go. Most are produced by the CFN stack; you provide a few yourself.
-
 | Variable | Example | Source | Used where |
 |---|---|---|---|
-| **IAMUserName** *(you choose)* | `saviynt-pam-svc` | You decide | CFN stack parameter; also the IAM user's name |
-| **Customer AWS account ID** | `987654321098` | AWS Console top-right account menu | Saviynt Connection's `AWS_ACCOUNT_ID` field |
+| **IAMUserName** *(you choose)* | `saviynt-pam-svc` | You decide | CFN stack parameter; the IAM user this creates is incidental and will be deleted in D.6 |
+| **Customer AWS account ID** | `987654321098` | AWS Console top-right account menu | Saviynt Connection's `AWS_ACCOUNT_ID` |
+| **Saviynt master role ARN** | `arn:aws:iam::123456789012:role/saviynt-eic-app` | `aws.saas.rolearn` in Saviynt's `externalconfig.properties` | Role's trust policy `Principal` |
+| **External ID** *(you choose)* | `pulumi-demo-2026-05-12` | You decide | Role's trust policy `Condition`, AND Saviynt Connection's `External ID` field |
 | **CFN stack name** | `Saviynt-PulumiDemo-IGA-PAM` | You decide | AWS Console only |
 | **CFN template URL or local file** | `https://saviynt-cf-templates.s3.amazonaws.com/.../security-analyzer-iga-pam.json` | From Saviynt support or PDF link | CFN Step 1 |
-| **SaviyntUser ARN** | `arn:aws:iam::987654321098:user/saviynt-pam-svc` | CFN Stack → Outputs tab → `SaviyntUser` row | Reference / audit |
-| **SaviyntAssumeRole ARN** | `arn:aws:iam::987654321098:role/Saviynt-PulumiDemo-IGA-PAM-SaviyntAssumeRole-XXXXXXX` | IAM Console → Roles → search `SaviyntAssumeRole` (NOT in Outputs) | Saviynt Connection's `Role ARN` field |
-| **Access Key ID** | `AKIA...XXXXXX` | IAM Console → Users → `<IAMUserName>` → Security Credentials → Create access key (manual post-stack step) | Saviynt Connection's `ACCESS KEY ID` field |
-| **Secret Access Key** | `<40-char secret>` | Same step as above — shown ONCE only | Saviynt Connection's `SECRET ACCESS KEY` field |
+| **SaviyntAssumeRole ARN** | `arn:aws:iam::987654321098:role/Saviynt-PulumiDemo-IGA-PAM-SaviyntAssumeRole-XXXXXXX` | IAM Console → Roles → search `SaviyntAssumeRole` after stack creates (NOT in Outputs) | Saviynt Connection's `Cross Account Role ARN` |
 | **Connection name in Saviynt** | `AWS-PulumiDemo` | You decide | Used as the link from Security System in `05-aws-iam-pam-endpoint.md` |
 
 ---
 
-## D.2 Deploy the CloudFormation Stack in your AWS account
+## D.2 Deploy the CloudFormation Stack
 
-This creates `SaviyntUser` (IAM user), `SaviyntAssumeRole` (IAM role with IAM/PAM permissions), and the policies that link them.
+This creates `SaviyntUser` (we'll delete in D.6), `SaviyntAssumeRole` (we'll modify its trust policy in D.4), and four managed policies.
 
 ### Click-by-click
 
 1. Log into the **AWS Console** as admin in your customer AWS account.
-2. Switch region to **us-east-2** (top-right region selector). IAM resources are global, but the CloudFormation stack record is regional — keeping it in our demo region keeps tagging tidy.
-3. Navigate to **CloudFormation** (search in the top services bar).
-4. Click **Create stack** → **With new resources (standard)**.
-5. On the **Create stack** wizard:
-   - **Prepare template**: `Template is ready`.
-   - **Specify template** → **Template source**: `Amazon S3 URL` (or `Upload a template file` if you have a local copy of the JSON).
-   - Paste the S3 URL, or upload the JSON.
-6. Click **Next** → **Step 2 — Specify stack details**.
-7. Fill in:
-   - **Stack name**: `Saviynt-PulumiDemo-IGA-PAM`. Must be alphanumeric + hyphens; ≤128 chars; starts with a letter.
-   - **Parameters → IAMUserName**: the name you decided for the IAM user (e.g., `saviynt-pam-svc`). Minimum 3 chars; alphanumeric, plus `+=,.@_-`.
-8. Click **Next** → **Step 3 — Configure stack options**.
-9. (Optional) Add a tag: Key=`Project`, Value=`PulumiSaviyntDemo`. Anything else default.
-10. Click **Next** → **Step 4 — Review**.
-11. Scroll to the bottom. Tick:
-   - ☑ **I acknowledge that AWS CloudFormation might create IAM resources with custom names**
-12. Click **Create stack**.
-13. Wait. Status goes `CREATE_IN_PROGRESS` → `CREATE_COMPLETE` (usually 30-60 seconds).
-
-### If you get errors
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| `Template format error: At least one Resources member must be defined` | Wrong S3 URL or empty file | Re-verify the URL from the PDF; or upload the JSON directly |
-| `User: ... is not authorized to perform: iam:CreateUser` | AWS user lacks IAM permissions | Use root user or an IAM user with `AdministratorAccess` for this one-time stack creation |
-| `EntityAlreadyExists: User with name <IAMUserName> already exists` | A previous stack run created the user; rolled back; left orphan | Delete the user from IAM Console, OR rerun with a different `IAMUserName` |
-| `Stack rollback initiated` | Some resource creation failed | Click into Stack → Events tab → find the first FAILED line; usually a name collision; rerun with a different stack name |
+2. Switch region to **us-east-2**.
+3. Navigate to **CloudFormation**.
+4. **Create stack** → **With new resources (standard)**.
+5. **Prepare template**: `Template is ready` → **Template source**: `Amazon S3 URL` (or upload the local JSON).
+6. Paste the URL or upload the file.
+7. **Next** → fill in:
+   - **Stack name**: `Saviynt-PulumiDemo-IGA-PAM`
+   - **Parameters → IAMUserName**: e.g., `saviynt-pam-svc` (the user will exist briefly; we delete in D.6)
+8. **Next** → defaults → **Next** → tick **I acknowledge that AWS CloudFormation might create IAM resources with custom names** → **Create stack**.
+9. Wait for `CREATE_COMPLETE` (30-60 seconds).
 
 ---
 
-## D.3 Capture Stack Outputs + post-deploy steps
+## D.3 Find the SaviyntAssumeRole ARN
 
-The template's Outputs tab gives you the user ARN; the role ARN and access keys are post-deploy work in the IAM Console.
-
-### Step 1: Grab the SaviyntUser ARN from Stack Outputs
-
-1. Once the stack reaches `CREATE_COMPLETE`, click the stack name to open it.
-2. Click the **Outputs** tab.
-3. Note the **SaviyntUser** key's value — copy into your scratch note.
-   ```
-   arn:aws:iam::987654321098:user/saviynt-pam-svc
-   ```
-
-### Step 2: Find the SaviyntAssumeRole ARN
-
-The role isn't in Outputs (template quirk) — find it in IAM:
+The role ARN isn't in the stack's Outputs (a template quirk — only `SaviyntUser` is exported).
 
 1. AWS Console → **IAM** → **Roles**.
-2. Search for the fragment `SaviyntAssumeRole`. You'll see the role with a CFN-generated name like `Saviynt-PulumiDemo-IGA-PAM-SaviyntAssumeRole-AB1CDEFGHIJK`.
-3. Click into the role → copy the **ARN** from the role's Summary section into your scratch note.
-
-### Step 3: Generate access keys for SaviyntUser
-
-⚠️ **These are long-lived AWS credentials. Saviynt will hold them as a vaulted PAM bootstrap credential. Treat with care; rotate via Saviynt's normal PAM rotation cadence after the demo.**
-
-1. AWS Console → **IAM** → **Users** → click `<IAMUserName>` (your `saviynt-pam-svc` or whatever).
-2. **Security credentials** tab.
-3. Scroll to **Access keys** → **Create access key**.
-4. **Use case**: pick `Third-party service` (or `Application running outside AWS`).
-5. (Optional) Tag: `purpose=saviynt-integration`.
-6. **Create access key**.
-7. ⚠️ Save **Access Key ID** AND **Secret Access Key** to your scratch note. **The secret is shown ONCE only** — if you close this page without copying it, you'll have to delete the key and create a new one. There's no recovery.
-8. Click **Done**.
-
-> Verify by checking the user's Security Credentials tab: you should see exactly one access key listed, status `Active`, with the access key ID you just captured.
+2. Search for `SaviyntAssumeRole`. You'll see a CFN-generated name like `Saviynt-PulumiDemo-IGA-PAM-SaviyntAssumeRole-AB1CDEFGHIJK`.
+3. Click into the role → copy the **ARN** from the Summary panel → save in your scratch note.
 
 ---
 
-## D.4 Verify the IAM resources are correctly wired
+## D.4 Replace the role's trust policy with cross-account trust
 
-A 60-second sanity check before moving to the Saviynt side. Each one of these failing means the stack created something subtly broken.
+This is the critical step that converts the template's default intra-account trust into the cross-account pattern Saviynt needs.
 
-1. **AWS Console → IAM → Users → `<IAMUserName>`**:
-   - **Permissions** tab: should show one attached managed policy: `Saviynt-PulumiDemo-IGA-PAM-SaviyntAWSSTSPolicy-...` (lets the user call `sts:AssumeRole` on the role).
-   - **Security credentials** tab: one access key, Active.
+### Current trust (what the template created)
 
-2. **AWS Console → IAM → Roles → `SaviyntAssumeRole`**:
-   - **Trust relationships** tab: should show two trusted principals:
-     - `arn:aws:iam::<your-account-id>:root` (this is what lets the IAM user, which is in this account, call AssumeRole)
-     - `ec2.amazonaws.com` (service principal; doesn't matter for our use)
-   - **Permissions** tab: should show four managed policies:
-     - `ReadOnlyAccess` (AWS managed, broad read across services)
-     - `SaviyntAWSDenyPolicy` (explicit denies for sensitive read operations — `s3:GetObject`, `sqs:ReceiveMessage`, etc.)
-     - `SaviyntCloudPAMPolicy` (allows `iam:Get*`, `iam:List*`, `ec2:Describe*`, `ec2:CreateSecurityGroup`, plus IAM role/policy management)
-     - `SaviyntAWSIAMPolicy` (the PAM-critical permissions: `iam:CreateAccessKey`, `iam:DeleteAccessKey`, `iam:CreateUser`, `iam:DeleteUser`, `iam:CreatePolicy`, etc.)
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Principal": {
+        "Service": ["ec2.amazonaws.com"],
+        "AWS": "arn:aws:iam::<your-account-id>:root"
+      }
+    }
+  ]
+}
+```
 
-3. **AWS Console → CloudFormation → your stack → Resources** tab: confirm all 6 resources are `CREATE_COMPLETE`.
+This trusts your *own* account's root + the EC2 service. Saviynt's account can't assume the role with this policy.
+
+### New trust (cross-account to Saviynt)
+
+1. In IAM → Roles → `SaviyntAssumeRole` → **Trust relationships** tab → **Edit trust policy**.
+2. Replace the entire JSON with:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "<paste-the-real-aws.saas.rolearn-VALUE-here>"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "sts:ExternalId": "<paste-your-chosen-External-ID-here>"
+        }
+      }
+    }
+  ]
+}
+```
+
+3. **Update policy**.
+
+Filled-in example (using sanitized values):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::123456789012:role/saviynt-eic-app"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "sts:ExternalId": "pulumi-demo-2026-05-12"
+        }
+      }
+    }
+  ]
+}
+```
+
+⚠️ **Common typo:** if you copy from `externalconfig.properties`, strip the `aws.saas.rolearn=` prefix. The principal value is **just the ARN**.
+
+### Verify
+
+After saving, the **Trust relationships** tab should show:
+- Trusted entity: AWS account `<Saviynt-master-account-id>` (or the role identity inside it)
+- Conditions: `sts:ExternalId` `StringEquals` `<your-chosen-value>`
 
 ---
 
 ## D.5 Create the AWS Connection in Saviynt
 
-This is the Saviynt-side wiring that uses the IAM user keys you just generated.
-
 ### Click-by-click
 
-1. Log into Saviynt EIC as `igaadmin`.
-2. Navigate to **Admin** → **Identity Repository** → **Connections**.
-3. Click **Actions** → **Create Connection**.
-4. **Connection Type**: select `AWS`.
-5. **Connection Name**: `AWS-PulumiDemo` (this is what we'll reference from Security Systems in `05`).
-6. **Connection Description**: `Saviynt-managed AWS integration for Pulumi demo (IGA + PAM via IAM user)`. Free text.
-7. **Default SAV Role**: leave blank — we're not importing AWS IAM users as Saviynt users.
+1. Log into Saviynt as `igaadmin`.
+2. **Admin** → **Identity Repository** → **Connections** → **Actions** → **Create Connection**.
+3. Set:
+   - **Connection Type**: `AWS`
+   - **Connection Name**: `AWS-PulumiDemo`
+   - **Connection Description**: `Cross-account connection to customer AWS for Pulumi pipeline demo (IGA + PAM)`
+   - **Default SAV Role**: leave blank
+4. Under "Enter your application details":
 
-Then "Enter your application details" — fill the visible fields:
+| Field | Value |
+|---|---|
+| **AWS ACCOUNT ID** | Your **customer** AWS account ID (12 digits) — NOT Saviynt's master account ID |
+| **External ID** | The same External ID string you typed into the trust policy in D.4 |
+| **Cross Account Role ARN** | The `SaviyntAssumeRole` ARN from D.3 |
+| **Stack Role Name** | Leave blank (optional; `aws.saas.rolestackname` in tenant externalconfig covers it) |
+| **ACCESS KEY ID** | Leave blank ⚠️ |
+| **SECRET ACCESS KEY** | Leave blank ⚠️ |
+| **Role ARN** | Leave blank ⚠️ |
 
-| Field | Value | Notes |
-|---|---|---|
-| **AWS ACCOUNT ID** | Your **customer** AWS account ID (12 digits) | The new AWS account, NOT Saviynt's master account ID |
-| **External ID** | leave blank | Not used by this template's auth pattern |
-| **Cross Account Role ARN** | leave blank | Not used by this template's auth pattern |
-| **Stack Role Name** | leave blank | Not used |
-| **ACCESS KEY ID** | The Access Key ID from D.3 Step 3 | Saviynt authenticates as the IAM user with this |
-| **SECRET ACCESS KEY** | The Secret Access Key from D.3 Step 3 | Pair to the Access Key ID; this is what makes Saviynt able to call AssumeRole |
-| **Role ARN** | The **SaviyntAssumeRole** ARN from D.3 Step 2 | The role Saviynt assumes after authenticating as the user |
+⚠️ **The three "leave blank" fields are visible in the UI because Saviynt's connection form covers both auth patterns, but for cloud-hosted Saviynt the backend ignores them.** Filling them in with values from a misread of the docs is what tripped us up the first time — leave them empty.
 
-Other fields visible on the form (set if shown):
-- **PULL_GOV_REGION_ONLY**: `No` (we're on AWS PublicCloud).
-- **DEFAULT_REGION**: `us-east-2`.
-- **CREATEUSERS**: `NO`.
-
-8. Optionally check **Use Credential Vault** for the SECRET ACCESS KEY if you want Saviynt's native secret vaulting (recommended for production; not required for the demo).
-9. Scroll to the bottom. Click **Save and Test Connection**.
+5. **Save and Test Connection**.
 
 ### Expected results
 
-- **Green success message** → Saviynt logged in as the IAM user, assumed the role, made a probe IAM call, and got a valid response. You're done with Section D.
-- **`InvalidClientTokenId` or `The security token included in the request is invalid`** → Access Key ID or Secret typo. Re-copy from your scratch note. If you've already closed the IAM "Create access key" page, delete the existing key in IAM Console and create a new one — you can't recover the secret.
-- **`AccessDenied: User is not authorized to perform: sts:AssumeRole`** → The role ARN is wrong OR the STS policy on the IAM user didn't deploy correctly. Re-verify D.4 step 1.
-- **`AccessDenied` on subsequent IAM operations** → Role ARN is correct but the role's permissions are missing. Re-verify D.4 step 2 — the four managed policies should all be attached.
+- **Green success** → cross-account trust working end-to-end. Done with Section D.
+- **`AccessDenied: sts:AssumeRole`** → trust policy doesn't match the assuming principal, or External ID mismatch. Re-check D.4: the `Principal.AWS` value must exactly equal `aws.saas.rolearn`; the `Condition.StringEquals.sts:ExternalId` must exactly equal the value in Saviynt's `External ID` field.
+- **`InvalidClientTokenId`** → `Cross Account Role ARN` typo. Re-paste from D.3.
+- **Connection error with no specific message** → most often, the tenant is processing the access-key fields (despite `aws.cloud.deployment=true`) and they were populated. Clear them, retry.
 
 ### Verify via API
-
-After Save and Test passes, confirm the connection is queryable:
 
 ```
 POST https://eic-poc-wesharris.saviyntcloud.com/ECM/api/v5/getConnections
@@ -192,13 +202,32 @@ Body:
 }
 ```
 
-Expected: one record with `connectiontype: "AWS"` and `status: "1"` (active).
+Expected: one record with `connectiontype: "AWS"` and `status: "1"`.
 
 ---
 
-## D.6 Update broker/.env if not yet set
+## D.6 Cleanup the unused IAM user
 
-The broker doesn't talk to AWS directly — it goes through Saviynt — so no AWS credentials live in `broker/.env`. The connection name you used here (`AWS-PulumiDemo`) gets referenced when we create the Security System and Endpoint in `05-aws-iam-pam-endpoint.md`. No `.env` change needed at this stage.
+The CFN template creates `SaviyntUser` (IAM user) and `SaviyntAWSSTSPolicy` (managed policy attached to it) for the non-cloud auth pattern we're not using. They're dead weight; safest to delete to minimize attack surface.
+
+### Click-by-click
+
+1. AWS Console → **IAM** → **Users** → click `<IAMUserName>` (your `saviynt-pam-svc`).
+2. **Security credentials** tab: confirm there are no access keys (we never created any). If there are by accident, delete them first.
+3. Back to the user's main page → **Delete** (top right) → type the username to confirm → **Delete**.
+4. **IAM** → **Policies** → search `Saviynt-PulumiDemo-IGA-PAM-SaviyntAWSSTSPolicy`. If present, **Delete** it too. (May fail if still attached to a user — if the user is already deleted, IAM lets the policy go.)
+
+### Note about CloudFormation drift
+
+After this cleanup, CloudFormation will flag the stack as "drifted" if you run a drift detection — because the live resources don't match the template. That's expected and harmless for our purposes. If you ever delete the stack, the drift on those two resources will be ignored since they no longer exist.
+
+The three managed policies that grant the role its actual PAM permissions stay:
+- `SaviyntAWSDenyPolicy` (explicit denies on sensitive read operations)
+- `SaviyntCloudPAMPolicy` (`iam:Get*`, `iam:List*`, `ec2:Describe*`, plus security-group / IAM role management)
+- `SaviyntAWSIAMPolicy` (the PAM-critical: `iam:CreateAccessKey`, `iam:DeleteAccessKey`, `iam:CreateUser`, etc.)
+- Plus the AWS managed `ReadOnlyAccess` from the template
+
+Those four together are what `SaviyntAssumeRole` gives Saviynt the ability to do once it assumes.
 
 ---
 
@@ -206,41 +235,53 @@ The broker doesn't talk to AWS directly — it goes through Saviynt — so no AW
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| **Save and Test fails with InvalidClientTokenId** | Access Key ID or Secret was typed wrong, OR secret was lost between IAM and Saviynt UI | Delete the access key in IAM, generate a new one, paste fresh into Saviynt |
-| **Save and Test fails with AssumeRole AccessDenied** | Role ARN typo, OR the role's trust policy didn't include the IAM user's account, OR the STS policy didn't attach to the user | D.4 verification check #1 and #2 |
-| **Saviynt can authenticate but IAM operations fail** | The four managed policies didn't attach to the role | D.4 step 2 — confirm all four policies are on the role; if not, the stack didn't fully apply (rerun with a different stack name) |
-| **Secret Access Key lost (closed the IAM page before copying)** | One-time-display policy | Delete the existing access key in IAM Console → Security Credentials → trash icon; click **Create access key** to make a new one; paste fresh into Saviynt and re-test |
-| **CFN stack rollback with `EntityAlreadyExists`** | The IAM user name collided with one from a prior run | Delete the orphaned user in IAM, OR re-run the stack with a different `IAMUserName` parameter |
-| **`PULL_GOV_REGION_ONLY` field not visible** | UI version differs | Look for it under "Connection Attributes" or expandable section; if absent entirely, that's fine — defaults to PublicCloud |
-| **`AWS_ACCOUNT_ID` blank when you submit** | Forgot the field — it's marked required | Paste your customer AWS account ID; **NOT** Saviynt's master account ID |
+| **Trust policy save: "Invalid principal in policy: 'aws.saas.rolearn=arn:...'"** | Pasted the property-file format including the `aws.saas.rolearn=` key prefix | Strip the prefix; the `Principal.AWS` value is just the ARN |
+| **Save and Test fails with AssumeRole AccessDenied** | Trust policy doesn't list `aws.saas.rolearn` value as principal, OR External ID mismatch between trust policy condition and Saviynt's External ID field | Compare both character-for-character; re-paste from scratch note |
+| **Save and Test fails with InvalidClientTokenId** | Wrong `Cross Account Role ARN` | Re-copy from IAM Console (D.3); strip any trailing whitespace |
+| **Save and Test fails despite trust policy being correct** | The three "leave blank" fields (ACCESS KEY ID, SECRET, Role ARN) are populated. The backend may attempt the IAM-user auth path even when cross-account fields are also set, depending on tenant config | Clear the access-key fields entirely; retry |
+| **"You don't have permission" on Edit trust policy** | AWS user lacks IAM permissions | Use root user or an IAM user with `AdministratorAccess` for this one-time edit |
+| **CFN stack rollback with `EntityAlreadyExists`** | The IAMUserName collided with a prior run | Delete the orphan user in IAM, OR re-run with a different `IAMUserName` |
+| **External ID looks invisible in Saviynt UI after Save** | Saviynt may mask it as a credential field | That's fine — it's stored; re-test to confirm |
+| **`PULL_GOV_REGION_ONLY` field not visible** | UI version differs | Look for it in expandable sections; if absent entirely, defaults to PublicCloud |
 
 ---
 
 ## AWS Cost & Free Tier Notes
 
-Nothing in Section D costs money on its own. Specifically:
+Nothing in Section D costs money on its own:
 
 | Resource | Cost | Notes |
 |---|---|---|
-| CloudFormation Stack | $0 | No charge for stacks themselves; only the resources they create |
-| IAM User + Role (created by the Stack) | $0 | IAM is always free |
-| IAM Policy attachments | $0 | Free |
-| Access keys for the IAM user | $0 | Free, including the keys Saviynt will generate at PAM checkout in `05` |
-| STS AssumeRole calls (Saviynt as IAM user → role) | $0 | Free |
+| CloudFormation Stack | $0 | No charge for stacks |
+| IAM Role + Policies | $0 | IAM is always free |
+| STS AssumeRole calls (Saviynt → your role) | $0 | Free |
+| Short-lived credentials issued by AWS to Saviynt | $0 | Free |
 
-⚠️ **Don't pick the "Real Time Monitoring" variants** from the template table. Those create CloudWatch event rules + SQS queues that have free-tier caps. **Security Analyzer + IGA + PAM** is the right choice — permissions only, no infrastructure.
+⚠️ **Don't pick the "Real Time Monitoring" variants** of the CFN template — those create CloudWatch + SQS infrastructure that has free-tier caps. **Security Analyzer + IGA + PAM** is permissions-only.
 
-**Use a fresh AWS account** if you want the full 12-month free tier on the downstream EC2 deploys (which happen in Pulumi, not here). If you reuse an account older than 12 months, t2.micro starts at ~$8.50/month and the cost story changes — though `pulumi destroy` after each demo run keeps it cents-per-day.
+**Use a fresh AWS account** for the full 12-month free tier on the downstream EC2 deploys (handled in Pulumi, not here). `pulumi destroy` after each demo run keeps cost at pennies even if you reuse an older account.
+
+---
+
+## Bootstrap-secrets inventory (talk-track note)
+
+The cross-account pattern means **NO new long-lived secrets** are introduced between Saviynt and your AWS account. Saviynt's identity is its EC2 IAM role, attested by AWS's instance metadata service (continuously short-lived, never seen by Saviynt's code). Your trust policy gates everything on that principal + the External ID condition. The External ID itself isn't a secret — it's a confused-deputy mitigation; an attacker who knew it still couldn't impersonate Saviynt without controlling Saviynt's EC2 instance metadata.
+
+The demo's standing-secrets count remains **two**:
+1. Saviynt SA password — broker's `.env`
+2. HMAC secret — broker's `.env` + GitHub repo secret
+
+This pattern would have been **three** had we used the IAM-user-with-keys auth model. Worth a one-line mention in `TALK_TRACK.md`'s talking points: *"We chose cross-account role trust over IAM-user-with-keys explicitly because the former eliminates one standing AWS credential — same risk surface as a typical enterprise integration."*
 
 ---
 
 ## What's next
 
-With the `AWS-PulumiDemo` connection saved & tested green in Saviynt, move to **`05-aws-iam-pam-endpoint.md`**. That covers:
+With the `AWS-PulumiDemo` connection green, move to **`05-aws-iam-pam-endpoint.md`**:
 
 1. Create the `AWS-IAM-Endpoint` Security System and Endpoint in Saviynt (using this connection).
 2. Create the `pulumi-deployer` IAM user in your customer AWS account with EC2 deploy permissions.
-3. Import IAM users from AWS into Saviynt (the first sync proves the connection works end-to-end for read).
+3. Import IAM users from AWS into Saviynt (first sync proves the connection works end-to-end for read).
 4. Onboard `pulumi-deployer` as a Saviynt PAM account with a rotation policy.
 5. Test `/checkout-aws` and `/checkin-aws` through the broker — observe live key rotation.
 
@@ -249,7 +290,6 @@ With the `AWS-PulumiDemo` connection saved & tested green in Saviynt, move to **
 After Section D, nothing in `broker/settings.py` changes — the connection lives entirely in Saviynt. The broker references it indirectly via Saviynt's PAM checkout API once we wire up the IAM endpoint in `05`. Defaults already match what we'll create:
 
 ```python
-# In broker/settings.py — already set, no change needed at this stage
 pam_endpoint_aws    = "AWS-IAM-Endpoint"     # to be created in 05
 pam_account_aws_iam = "pulumi-deployer"      # to be created in 05
 ```

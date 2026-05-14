@@ -1,5 +1,7 @@
 # 05 — AWS IAM Endpoint + `pulumi-deployer` PAM Onboarding
 
+> **🛑 STATUS (2026-05-14): BLOCKED at E.6 — PAM enablement of `pulumi-deployer`.** E.1–E.5 are done; the account exists in Saviynt with the correct AWS metadata. The "PAM Enabled" flag on the endpoint/account refuses to persist — silently reverts on save in the UI, and `updateAccount` API calls with `privileged: true` either don't stick or return errors. Have engaged outside help to identify what's missing. See "Pick-up checkpoint" inside E.6 below for resume notes.
+
 > **Goal:** Stand up the Saviynt Security System and Endpoint named `AWS-IAM-Endpoint` over the cross-account connection from `04`. Create the `pulumi-deployer` IAM user in your customer AWS account with the permissions Pulumi needs to deploy EC2. Onboard `pulumi-deployer` as a Saviynt PAM account with rotation. Validate end-to-end through the broker's `/checkout-aws` → use the keys → `/checkin-aws` cycle.
 
 > **The demo-worthy moment this enables:** before the pipeline runs, show `pulumi-deployer`'s current AWS access keys. Broker calls `/checkout-aws` → Saviynt invokes the IAM API to generate fresh keys, returns them. Pulumi uses those new keys to deploy. Pipeline calls `/checkin-aws` → Saviynt deletes the keys. Try to use them after → AWS rejects. Live rotation, visible to the audience.
@@ -187,7 +189,37 @@ Before onboarding to PAM, confirm the connector is reading the IAM user correctl
 
 ## E.6 Onboard `pulumi-deployer` as a Saviynt PAM account
 
-> **⚠️ This section has UI specifics that vary by Saviynt Amsterdam build. The high-level flow is fixed; the exact menu names may differ. Treat "VERIFY in UI" as a prompt to find the equivalent in your tenant.**
+> **🛑 PICK-UP CHECKPOINT (2026-05-14) — read this first when returning**
+>
+> **What's done (E.1–E.5):** Security System `AWS-IAM-Endpoint` exists, Endpoint of the same name is bound to it via the `AWS-PulumiDemo` connection, `pulumi-deployer` IAM user created in customer AWS with `AmazonEC2FullAccess` (and zero access keys — the demo expects PAM to generate them on checkout), Full Import job ran successfully, account record is visible in Saviynt with correct ARN/MFA/login-profile custom properties. `accessKeyMetadata` field is absent on the account record — expected, since no keys exist yet.
+>
+> **Where we got stuck:** Enabling PAM on the account / endpoint. Specifically:
+> - The **PAM Enabled** flag on the endpoint silently reverts when saved in the UI.
+> - `updateAccount` API call with `privileged: "true"` + `accounttype: "FIREFIGHTERID"` didn't make the toggle stick either.
+> - `updateEndpoint` API call with a `pamConfig` body returned 401 / "invalid payload" depending on the exact shape tried.
+>
+> **What was tried:**
+> - PAM Configuration JSON variations in the GUI: with `KEY` wrapper, `IAMACCESSKEY` wrapper, flat `{"maxConcurrentSession":"50"}`, and finally a `CONSOLE` wrapper with `Connection: AWS` per the Saviynt Cloud PAM Admin Guide samples (lines 3605-3855 of that guide). None made PAM Enabled persist.
+> - Confirmed `igaadmin` has roles `ROLE_SAV_PAMADMIN`, `ROLE_SAV_PAMOWNER`, `ROLE_SAV_PAMENDUSER`, `ROLE_SUPERADMIN` — not a permissions issue.
+>
+> **What we learned from the Saviynt Cloud PAM Administration Guide (2026-02-12 edition) that contradicts earlier assumptions:**
+> 1. The documented credential-type wrappers in PAM Configuration JSON are only **`CONSOLE`, `UNIX`, `WINDOWS`, `DB`** — there is no `IAMACCESSKEY`, `AWSACCESSKEY`, or `KEY` wrapper. For an AWS IAM user, the closest documented analog is `CONSOLE` with `"authenticationType": "KEY,PASSWORD"` inside `endpointPamConfig`.
+> 2. `Connection` field values in PAM_Config samples are connection-type names like `AWS`, `GCP`, `Azure`, `AD`, `Okta` — never `REST`.
+> 3. **`Resource Type` on the endpoint must be set** to one of `Instance` / `Console` / `Database`, otherwise PAM Enabled rolls back on save. Quote from guide: *"This parameter is mandatory if PAM Enabled is set to ON"* and *"if you edit any parameter in the PAM Attributes tab... ensure to set the Resource Type parameter to Console. If the parameter is not set to Console, the application console bootstrap process fails."* **This is the leading hypothesis for why PAM Enabled wouldn't stick.**
+> 4. **`rotateKey: true`** must be set in the endpoint's Configuration JSON (PAM Attributes tab — separate from the PAM Configuration JSON) or `Rotate On Checkin` is no-op.
+> 5. The **global setting** `Enable Account Password Rotation Policies` must be ON or per-account rotation fields don't render.
+> 6. Account-level PAM Enabled has a dependency on a **successful change-password task** before the flag persists (per p.438-449 of the guide).
+> 7. The guide names a specific PAM-aware connection template: **`AWSPAM_CloudDeploymentCrossAccount_template`**. Worth verifying the `AWS-PulumiDemo` connection from `04-aws-cross-account.md` was created from this template (or has the PAM sub-config it requires).
+> 8. **The exact demo pattern — Saviynt PAM calling AWS IAM `CreateAccessKey` on checkout and `DeleteAccessKey` on checkin for a vaulted IAM user — is NOT documented in the PAM admin guide.** The guide's AWS PAM section describes a "vault the IAM user creds, launch the AWS console" pattern. Whether the broker-driven dynamic-access-key flow is supported transparently or requires a custom connector is an open question. Confirm with Saviynt support / the outside help engaged.
+>
+> **First three things to try when you come back:**
+> 1. **Set the endpoint's Resource Type to `Console`** (PAM Attributes tab on the endpoint). Then retry the PAM Enabled toggle on the endpoint.
+> 2. **Add `rotateKey: true`** to the endpoint's Configuration JSON.
+> 3. **Verify the `AWS-PulumiDemo` connection was built from `AWSPAM_CloudDeploymentCrossAccount_template`** (Admin → Connections → AWS-PulumiDemo → check the connection type / template). If it was built from a non-PAM AWS template, the connection won't expose the PAM hooks the endpoint needs.
+>
+> If those three don't unblock PAM Enabled, escalate to outside help with the dump above — they'll want to know what's been tried.
+
+> **⚠️ The click-by-click below was the original plan and has NOT been validated end-to-end against this tenant.** The high-level flow is fixed; specific UI menu names may differ in your Amsterdam build. Treat "VERIFY in UI" as a prompt to find the equivalent in your tenant.
 
 ### What we're doing
 
